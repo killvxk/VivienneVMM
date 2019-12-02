@@ -2,6 +2,8 @@
 
 #include <intrin.h>
 
+#include <cstdio>
+
 #include "test_util.h"
 
 #include "..\common\debug.h"
@@ -88,7 +90,7 @@ TestHardwareBreakpointRanges()
     //   | | | | |x|x|x|x| | | | | | | | |  Breakpoint
     //   +-------------------------------+
     //
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         DEBUG_REGISTER_INDEX,
         (ULONG_PTR)(&g_FourWords.B),
@@ -97,7 +99,7 @@ TestHardwareBreakpointRanges()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (execute) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (execute) failed: %u\n",
             GetLastError());
     }
 
@@ -118,10 +120,11 @@ TestHardwareBreakpointRanges()
     }
 
     // Clear the breakpoint.
-    status = DrvClearHardwareBreakpoint(DEBUG_REGISTER_INDEX);
+    status = VivienneIoClearHardwareBreakpoint(DEBUG_REGISTER_INDEX);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     //
@@ -134,7 +137,7 @@ TestHardwareBreakpointRanges()
     //   |x|x|x|x|x|x|x|x|x|x|x|x|x|x|x|x|  Breakpoint
     //   +-------------------------------+
     //
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         DEBUG_REGISTER_INDEX,
         (ULONG_PTR)&g_FourWords,
@@ -143,7 +146,7 @@ TestHardwareBreakpointRanges()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (execute) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (execute) failed: %u\n",
             GetLastError());
     }
 
@@ -161,10 +164,11 @@ TestHardwareBreakpointRanges()
     }
 
     // Clear the breakpoint.
-    status = DrvClearHardwareBreakpoint(DEBUG_REGISTER_INDEX);
+    status = VivienneIoClearHardwareBreakpoint(DEBUG_REGISTER_INDEX);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     // Verify that all debug registers on all processors were cleared.

@@ -1,5 +1,7 @@
 #include "tests.h"
 
+#include <cstdio>
+
 #include "test_util.h"
 
 #include "..\common\arch_x64.h"
@@ -36,8 +38,9 @@ typedef struct _STRESSTEST_CONTEXT
 //=============================================================================
 // Module Globals
 //=============================================================================
-static ULONG g_pAccessTargets[NUMBER_OF_ACCESS_TARGETS] = {};
-static ULONG g_pWriteTargets[NUMBER_OF_WRITE_TARGETS] = {};
+static HANDLE g_BarrierEvent = NULL;
+static ULONG_PTR g_pAccessTargets[NUMBER_OF_ACCESS_TARGETS] = {};
+static ULONG_PTR g_pWriteTargets[NUMBER_OF_WRITE_TARGETS] = {};
 static BOOLEAN g_Active = FALSE;
 
 
@@ -56,20 +59,31 @@ StressTest1(
 )
 {
     PSTRESSTEST_CONTEXT pContext = (PSTRESSTEST_CONTEXT)lpParameter;
-    ULONG AccessValue = 0;
+    ULONG_PTR AccessValue = 0;
+    DWORD waitstatus = 0;
     DWORD status = ERROR_SUCCESS;
+
+    // Wait until all threads have been created.
+    waitstatus = WaitForSingleObject(g_BarrierEvent, WAIT_TIMEOUT_MS);
+    if (WAIT_OBJECT_0 != waitstatus)
+    {
+        FAIL_TEST(
+            "WaitForSingleObject failed: %u (%s)\n",
+            GetLastError(),
+            __FUNCTION__);
+    }
 
     while (g_Active)
     {
-        AccessValue = g_pAccessTargets[pContext->AccessIndex];
-        
-        g_pWriteTargets[pContext->WriteIndex] =
-            AccessValue * pContext->RandomValue;
-
         if (!BreakpointStealthCheck())
         {
             FAIL_TEST("BreakpointStealthCheck failed.\n");
         }
+
+        AccessValue = g_pAccessTargets[pContext->AccessIndex];
+
+        g_pWriteTargets[pContext->WriteIndex] =
+            AccessValue * pContext->RandomValue;
 
         Sleep(pContext->SleepDuration);
     }
@@ -85,20 +99,31 @@ StressTest2(
 )
 {
     PSTRESSTEST_CONTEXT pContext = (PSTRESSTEST_CONTEXT)lpParameter;
-    ULONG AccessValue = 0;
+    ULONG_PTR AccessValue = 0;
+    DWORD waitstatus = 0;
     DWORD status = ERROR_SUCCESS;
+
+    // Wait until all threads have been created.
+    waitstatus = WaitForSingleObject(g_BarrierEvent, WAIT_TIMEOUT_MS);
+    if (WAIT_OBJECT_0 != waitstatus)
+    {
+        FAIL_TEST(
+            "WaitForSingleObject failed: %u (%s)\n",
+            GetLastError(),
+            __FUNCTION__);
+    }
 
     while (g_Active)
     {
-        AccessValue = g_pAccessTargets[pContext->AccessIndex];
-
-        g_pWriteTargets[pContext->WriteIndex] =
-            AccessValue / pContext->RandomValue;
-
         if (!BreakpointStealthCheck())
         {
             FAIL_TEST("BreakpointStealthCheck failed.\n");
         }
+
+        AccessValue = g_pAccessTargets[pContext->AccessIndex];
+
+        g_pWriteTargets[pContext->WriteIndex] =
+            AccessValue / pContext->RandomValue;
 
         Sleep(pContext->SleepDuration);
     }
@@ -114,20 +139,31 @@ StressTest3(
 )
 {
     PSTRESSTEST_CONTEXT pContext = (PSTRESSTEST_CONTEXT)lpParameter;
-    ULONG AccessValue = 0;
+    ULONG_PTR AccessValue = 0;
+    DWORD waitstatus = 0;
     DWORD status = ERROR_SUCCESS;
+
+    // Wait until all threads have been created.
+    waitstatus = WaitForSingleObject(g_BarrierEvent, WAIT_TIMEOUT_MS);
+    if (WAIT_OBJECT_0 != waitstatus)
+    {
+        FAIL_TEST(
+            "WaitForSingleObject failed: %u (%s)\n",
+            GetLastError(),
+            __FUNCTION__);
+    }
 
     while (g_Active)
     {
-        AccessValue = g_pAccessTargets[pContext->AccessIndex];
-
-        g_pWriteTargets[pContext->WriteIndex] =
-            AccessValue << pContext->RandomValue;
-
         if (!BreakpointStealthCheck())
         {
             FAIL_TEST("BreakpointStealthCheck failed.\n");
         }
+
+        AccessValue = g_pAccessTargets[pContext->AccessIndex];
+
+        g_pWriteTargets[pContext->WriteIndex] =
+            AccessValue << pContext->RandomValue;
 
         Sleep(pContext->SleepDuration);
     }
@@ -163,10 +199,8 @@ InitializeStressTestContext(
         case 1: pContext->Exerciser = StressTest2; break;
         case 2: pContext->Exerciser = StressTest3; break;
         default:
-        {
             status = FALSE;
             goto exit;
-        }
     }
 
 exit:
@@ -193,41 +227,36 @@ SetRandomBreakpoint()
     {
         // Execution.
         case 0:
-        {
             Address = (RANDOM_ULONG % 2)
                 ? (ULONG_PTR)&BreakpointStealthCheck
                 : (ULONG_PTR)&Sleep;
             Type = HWBP_TYPE::Execute;
             Size = HWBP_SIZE::Byte;
             break;
-        }
+
         // Access.
         case 1:
-        {
             Address = (ULONG_PTR)&g_pAccessTargets[
                 RANDOM_ULONG % (ARRAYSIZE(g_pAccessTargets) - 1)
             ];
             Type = HWBP_TYPE::Access;
             Size = HWBP_SIZE::Dword;
             break;
-        }
+
         // Write.
         case 2:
-        {
             Address = (ULONG_PTR)&g_pWriteTargets[
                 RANDOM_ULONG % (ARRAYSIZE(g_pWriteTargets) - 1)
             ];
             Type = HWBP_TYPE::Write;
             Size = HWBP_SIZE::Dword;
             break;
-        }
+
         default:
-        {
             FAIL_TEST("Unexpected index: %u", Index);
-        }
     }
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         Index,
         Address,
@@ -235,7 +264,8 @@ SetRandomBreakpoint()
         Size);
     if (!status)
     {
-        FAIL_TEST("DrvSetHardwareBreakpoint failed: %u", GetLastError());
+        FAIL_TEST("VivienneIoSetHardwareBreakpoint failed: %u",
+            GetLastError());
     }
 }
 
@@ -265,6 +295,13 @@ TestHardwareBreakpointStress()
 
     PRINT_TEST_HEADER;
 
+    // Initialize the thread barrier event.
+    g_BarrierEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_BarrierEvent)
+    {
+        FAIL_TEST("CreateEvent failed: %u.\n", GetLastError());
+    }
+
     // Install the stealth check VEH.
     pVectoredHandler = AddVectoredExceptionHandler(
         1,
@@ -286,7 +323,7 @@ TestHardwareBreakpointStress()
     for (ULONG i = 0; i < ARRAYSIZE(g_pAccessTargets); ++i)
     {
         printf(
-            "    %02u: %8u %8X\n",
+            "    %02u: %Iu 0x%IX\n",
             i,
             g_pAccessTargets[i],
             g_pAccessTargets[i]);
@@ -299,7 +336,7 @@ TestHardwareBreakpointStress()
     for (ULONG i = 0; i < ARRAYSIZE(g_pWriteTargets); ++i)
     {
         printf(
-            "    %02u: %8u %8X\n",
+            "    %02u: %Iu 0x%IX\n",
             i,
             g_pWriteTargets[i],
             g_pWriteTargets[i]);
@@ -336,6 +373,13 @@ TestHardwareBreakpointStress()
         }
     }
 
+    // Activate the exercise threads.
+    status = SetEvent(g_BarrierEvent);
+    if (!status)
+    {
+        FAIL_TEST("SetEvent failed: %u\n", GetLastError());
+    }
+
     //
     // Begin the stress test by setting 'random' breakpoints at a random
     //  interval. The idea here is to constantly overwrite the debug registers
@@ -368,6 +412,7 @@ TestHardwareBreakpointStress()
     // Close thread handles.
     for (ULONG i = 0; i < ARRAYSIZE(hThreads); ++i)
     {
+#pragma warning(suppress : 6001) // Using uninitialized memory.
         status = CloseHandle(hThreads[i]);
         if (!status)
         {
@@ -379,13 +424,14 @@ TestHardwareBreakpointStress()
 
     // Clear all breakpoints.
     status =
-        DrvClearHardwareBreakpoint(0) &&
-        DrvClearHardwareBreakpoint(1) &&
-        DrvClearHardwareBreakpoint(2) &&
-        DrvClearHardwareBreakpoint(3);
+        VivienneIoClearHardwareBreakpoint(0) &&
+        VivienneIoClearHardwareBreakpoint(1) &&
+        VivienneIoClearHardwareBreakpoint(2) &&
+        VivienneIoClearHardwareBreakpoint(3);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     // Verify that all debug registers on all processors were cleared.
@@ -402,6 +448,12 @@ TestHardwareBreakpointStress()
         FAIL_TEST(
             "RemoveVectoredExceptionHandler failed: %u\n",
             GetLastError());
+    }
+
+    // Release the barrier event.
+    if (!CloseHandle(g_BarrierEvent))
+    {
+        FAIL_TEST("CloseHandle failed: %u.\n", GetLastError());
     }
 
     PRINT_TEST_FOOTER;

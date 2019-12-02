@@ -1,5 +1,10 @@
 /*++
 
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
 Module Name:
 
     register_util.cpp
@@ -20,22 +25,20 @@ Environment:
 
 #include "register_util.h"
 
-#include "..\common\arch_x64.h"
-
 
 //=============================================================================
 // Client Interface
 //=============================================================================
 
 //
-// ReadGuestRegisterValue
+// ReadGuestGpRegisterValue
 //
 // Utility to read a register value from guest state.
 //
 _Use_decl_annotations_
 NTSTATUS
-ReadGuestRegisterValue(
-    ULONG Register,
+ReadGuestGpRegisterValue(
+    X64_REGISTER Register,
     GpRegisters* pGuestRegisters,
     ULONG_PTR GuestIp,
     PULONG_PTR pRegisterValue
@@ -43,7 +46,9 @@ ReadGuestRegisterValue(
 {
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
+    //
     // Zero out parameters.
+    //
     *pRegisterValue = 0;
 
     switch (Register)
@@ -66,15 +71,12 @@ ReadGuestRegisterValue(
         case REGISTER_R14: *pRegisterValue = pGuestRegisters->r14; break;
         case REGISTER_R15: *pRegisterValue = pGuestRegisters->r15; break;
         case REGISTER_INVALID:
-        {
             __fallthrough;
-        }
         default:
-        {
             ntstatus = STATUS_INVALID_PARAMETER_1;
-            break;
-        }
+            goto exit;
     }
 
+exit:
     return ntstatus;
 }

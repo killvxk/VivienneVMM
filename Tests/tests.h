@@ -4,28 +4,62 @@
 
 #include "..\VivienneVMM\config.h"
 
+//
+// TODO Add a test which executes an 'int 1' instruction.
+//
+
 //=============================================================================
-// Test Interface
+// Parser
 //=============================================================================
 VOID
-TestSetClearHardwareBreakpoint();
+TestTokenParser();
+
+//=============================================================================
+// BPM
+//=============================================================================
+VOID
+TestReadDebugRegister();
 
 VOID
-TestDuplicateHardwareBreakpoints();
+TestSetClearHardwareBreakpoint();
 
 VOID
 TestHardwareBreakpointStress();
 
 VOID
-TestCaptureUniqueRegisterValues();
-
-VOID
-TestCaptureUniqueRegisterValuesEdgeCases();
-
-VOID
 TestHardwareBreakpointRanges();
 
-#ifdef CFG_ENABLE_DR_FACADE
+VOID
+TestDuplicateHardwareBreakpoints();
+
+//=============================================================================
+// CECR
+//=============================================================================
+VOID
+TestCaptureRegisterValues();
+
+VOID
+TestCaptureRegisterValuesEdgeCases();
+
+//=============================================================================
+// CECM
+//=============================================================================
+VOID
+TestCaptureMemoryValues();
+
+VOID
+TestCaptureMemoryValuesFpuState();
+
+VOID
+TestAntiDebugCecmTrapPage();
+
+VOID
+TestAntiDebugCecmSpanningPage();
+
+#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
+//=============================================================================
+// FCD
+//=============================================================================
 VOID
 TestDebugRegisterFacade();
 
@@ -36,5 +70,8 @@ VOID
 TestProcessUnownedHardwareBreakpoint();
 #endif
 
+//=============================================================================
+// General Anti-Debug
+//=============================================================================
 VOID
 TestAntiDebugSingleStep();

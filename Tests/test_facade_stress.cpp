@@ -1,5 +1,7 @@
 #include <windows.h>
 
+#include <cstdio>
+
 #include "test_util.h"
 
 #include "..\common\time_util.h"
@@ -40,9 +42,10 @@ typedef struct _FACADE_STRESS_CONTEXT
 //=============================================================================
 // Module Globals
 //=============================================================================
-static volatile LONGLONG g_ThreadLocalIterations = 0;
-static volatile LONGLONG g_VvmmManagedIterations = 0;
-static volatile LONGLONG g_ThreadStopCondition = 0;
+static HANDLE g_BarrierEvent = NULL;
+static volatile LONG64 g_ThreadLocalIterations = 0;
+static volatile LONG64 g_VvmmManagedIterations = 0;
+static volatile LONG64 g_ThreadStopCondition = 0;
 
 
 //=============================================================================
@@ -69,12 +72,16 @@ GenerateRandomThreadLocalBreakpointParameters(
     *pType = {};
     *pSize = {};
 
+    //
     // Address must be a valid userspace address.
+    //
     *pAddress = (ULONG_PTR)GenerateBoundedRandomValue(
         MIN_VALID_USER_ADDRESS,
         MAX_VALID_USER_ADDRESS);
 
+    //
     // Type.
+    //
     switch ((HWBP_TYPE)(RANDOM_ULONG % 3))
     {
         case HWBP_TYPE::Execute: Type = HWBP_TYPE::Execute; break;
@@ -83,38 +90,34 @@ GenerateRandomThreadLocalBreakpointParameters(
         default:                 Type = HWBP_TYPE::Access;  break;
     }
 
+    //
     // Size.
     //
     // NOTE Data breakpoints must be aligned based on the size-condition.
+    //
     switch ((HWBP_SIZE)(RANDOM_ULONG % 4))
     {
         case HWBP_SIZE::Byte:
-        {
             Size = HWBP_SIZE::Byte;
             break;
-        }
+
         case HWBP_SIZE::Word:
-        {
             Size = HWBP_SIZE::Word;
             ALIGN_DOWN_POINTER_BY(pAddress, sizeof(WORD));
             break;
-        }
+
         case HWBP_SIZE::Qword:
-        {
             Size = HWBP_SIZE::Qword;
             ALIGN_DOWN_POINTER_BY(pAddress, sizeof(DWORD64));
             break;
-        }
+
         case HWBP_SIZE::Dword:
-        {
             __fallthrough;
-        }
+
         default:
-        {
             Size = HWBP_SIZE::Dword;
             ALIGN_DOWN_POINTER_BY(pAddress, sizeof(DWORD));
             break;
-        }
     }
 
     // Set out parameters.
@@ -135,11 +138,20 @@ InstallThreadLocalBreakpoints(
 )
 {
     PFACADE_STRESS_CONTEXT pContext = (PFACADE_STRESS_CONTEXT)lpParameter;
+    LONG64 nIterations = 0;
+    DWORD waitstatus = 0;
     DWORD threadstatus = ERROR_SUCCESS;
+
+    // Wait until all threads have been created.
+    waitstatus = WaitForSingleObject(g_BarrierEvent, WAIT_TIMEOUT_MS);
+    if (WAIT_OBJECT_0 != waitstatus)
+    {
+        FAIL_TEST("WaitForSingleObject failed: %u\n", GetLastError());
+    }
 
     // NOTE This check should be atomic, but the presence of a race condition
     //  here will not negatively impact the test.
-    while (NUMBER_OF_ITERATIONS > g_ThreadStopCondition)
+    while (NUMBER_OF_ITERATIONS > nIterations)
     {
         ULONG_PTR Address = 0;
         HWBP_TYPE Type = {};
@@ -147,7 +159,7 @@ InstallThreadLocalBreakpoints(
         ULONG SleepDuration = 0;
         BOOL status = TRUE;
 
-        InterlockedIncrement64(&g_ThreadLocalIterations);
+        nIterations = InterlockedIncrement64(&g_ThreadStopCondition);
         
         // Set a random thread-local breakpoint.
         // NOTE This breakpoint will not (and cannot) be triggered.
@@ -202,13 +214,22 @@ InstallVvmmBreakpoints(
     _In_ LPVOID lpParameter
 )
 {
+    LONG64 nIterations = 0;
+    DWORD waitstatus = 0;
     DWORD status = ERROR_SUCCESS;
 
     UNREFERENCED_PARAMETER(lpParameter);
 
+    // Wait until all threads have been created.
+    waitstatus = WaitForSingleObject(g_BarrierEvent, WAIT_TIMEOUT_MS);
+    if (WAIT_OBJECT_0 != waitstatus)
+    {
+        FAIL_TEST("WaitForSingleObject failed: %u\n", GetLastError());
+    }
+
     // Atomic operations are not required because only one thread will write
     //  to the stop-condition global. This laziness is to reduce complexity.
-    while (NUMBER_OF_ITERATIONS > g_ThreadStopCondition)
+    while (NUMBER_OF_ITERATIONS > nIterations)
     {
         ULONG Index = RANDOM_ULONG % DAR_COUNT;
         ULONG_PTR Address = 0;
@@ -222,7 +243,7 @@ InstallVvmmBreakpoints(
         // Set a random VVMM-breakpoint.
         GenerateRandomThreadLocalBreakpointParameters(&Address, &Type, &Size);
 
-        status = DrvSetHardwareBreakpoint(
+        status = VivienneIoSetHardwareBreakpoint(
             GetCurrentProcessId(),
             Index,
             Address,
@@ -230,17 +251,19 @@ InstallVvmmBreakpoints(
             Size);
         if (!status)
         {
-            FAIL_TEST("DrvSetHardwareBreakpoint failed: %u\n", GetLastError());
+            FAIL_TEST("VivienneIoSetHardwareBreakpoint failed: %u\n",
+                GetLastError());
         }
 
         // Occasionally clear a random breakpoint.
         if (0 == RANDOM_ULONG % 5)
         {
-            status = DrvClearHardwareBreakpoint(RANDOM_ULONG % DAR_COUNT);
+            status =
+                VivienneIoClearHardwareBreakpoint(RANDOM_ULONG % DAR_COUNT);
             if (!status)
             {
                 FAIL_TEST(
-                    "DrvClearHardwareBreakpoint failed: %u\n",
+                    "VivienneIoClearHardwareBreakpoint failed: %u\n",
                     GetLastError());
             }
         }
@@ -252,7 +275,7 @@ InstallVvmmBreakpoints(
 
         Sleep(SleepDuration);
 
-        InterlockedIncrement64(&g_ThreadStopCondition);
+        nIterations = InterlockedIncrement64(&g_ThreadStopCondition);
     }
 
     return status;
@@ -281,6 +304,13 @@ TestDebugRegisterFacadeStress()
     static_assert(ARRAYSIZE(ThreadIds) == ARRAYSIZE(ThreadContexts), "Size check");
 
     PRINT_TEST_HEADER;
+
+    // Initialize the thread barrier event.
+    g_BarrierEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_BarrierEvent)
+    {
+        FAIL_TEST("CreateEvent failed: %u.\n", GetLastError());
+    }
 
     // Install the stealth check VEH.
     pVectoredHandler = AddVectoredExceptionHandler(
@@ -335,6 +365,13 @@ TestDebugRegisterFacadeStress()
         printf("tid = 0x%IX\n", (ULONG_PTR)ThreadIds[i]);
     }
 
+    // Activate the exercise threads.
+    status = SetEvent(g_BarrierEvent);
+    if (!status)
+    {
+        FAIL_TEST("SetEvent failed: %u\n", GetLastError());
+    }
+
     // Allow the threads to execute until the iteration count is met.
     waitstatus = WaitForMultipleObjects(
         ARRAYSIZE(hThreads),
@@ -352,6 +389,7 @@ TestDebugRegisterFacadeStress()
     // Close thread handles.
     for (ULONG i = 0; i < ARRAYSIZE(hThreads); ++i)
     {
+#pragma warning(suppress : 6001) // Using uninitialized memory.
         status = CloseHandle(hThreads[i]);
         if (!status)
         {
@@ -368,13 +406,14 @@ TestDebugRegisterFacadeStress()
 
     // Clear all VVMM-managed breakpoints.
     status =
-        DrvClearHardwareBreakpoint(0) &&
-        DrvClearHardwareBreakpoint(1) &&
-        DrvClearHardwareBreakpoint(2) &&
-        DrvClearHardwareBreakpoint(3);
+        VivienneIoClearHardwareBreakpoint(0) &&
+        VivienneIoClearHardwareBreakpoint(1) &&
+        VivienneIoClearHardwareBreakpoint(2) &&
+        VivienneIoClearHardwareBreakpoint(3);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     // Verify that all debug registers on all processors were cleared.
@@ -391,6 +430,12 @@ TestDebugRegisterFacadeStress()
         FAIL_TEST(
             "RemoveVectoredExceptionHandler failed: %u\n",
             GetLastError());
+    }
+
+    // Release the barrier event.
+    if (!CloseHandle(g_BarrierEvent))
+    {
+        FAIL_TEST("CloseHandle failed: %u.\n", GetLastError());
     }
 
     // Print statistics.

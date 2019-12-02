@@ -1,5 +1,7 @@
 #include "tests.h"
 
+#include <cstdio>
+
 #include "test_util.h"
 
 #include "..\VivienneCL\driver_io.h"
@@ -26,6 +28,7 @@ static DWORD g_AccessTarget = 1;
 // ExecuteTarget
 //
 static
+DECLSPEC_NOINLINE
 BOOL
 ExecuteTarget()
 {
@@ -49,6 +52,7 @@ VOID
 TestDuplicateHardwareBreakpoints()
 {
     PVOID pVectoredHandler = NULL;
+    DWORD Value = 0;
     BOOL status = TRUE;
 
     PRINT_TEST_HEADER;
@@ -69,7 +73,7 @@ TestDuplicateHardwareBreakpoints()
         "Installing execution breakpoints at 0x%IX\n",
         (ULONG_PTR)ExecuteTarget);
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         0,
         (ULONG_PTR)ExecuteTarget,
@@ -78,11 +82,11 @@ TestDuplicateHardwareBreakpoints()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (execute) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (execute) failed: %u\n",
             GetLastError());
     }
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         3,
         (ULONG_PTR)ExecuteTarget,
@@ -91,7 +95,7 @@ TestDuplicateHardwareBreakpoints()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (execute) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (execute) failed: %u\n",
             GetLastError());
     }
 
@@ -100,13 +104,14 @@ TestDuplicateHardwareBreakpoints()
 
     for (ULONG i = 0; i < NUMBER_OF_ITERATIONS; ++i)
     {
-        (VOID)ExecuteTarget();
-
         // Stealth check.
         if (!BreakpointStealthCheck())
         {
             FAIL_TEST("BreakpointStealthCheck failed.\n");
         }
+
+        // Trigger the breakpoint.
+        (VOID)ExecuteTarget();
 
         // Delay execution to allow the driver log buffer to flush.
         Sleep(SLEEP_DURATION_MS);
@@ -116,13 +121,14 @@ TestDuplicateHardwareBreakpoints()
 
     // Clear all breakpoints.
     status =
-        DrvClearHardwareBreakpoint(0) &&
-        DrvClearHardwareBreakpoint(1) &&
-        DrvClearHardwareBreakpoint(2) &&
-        DrvClearHardwareBreakpoint(3);
+        VivienneIoClearHardwareBreakpoint(0) &&
+        VivienneIoClearHardwareBreakpoint(1) &&
+        VivienneIoClearHardwareBreakpoint(2) &&
+        VivienneIoClearHardwareBreakpoint(3);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     // Verify that all debug registers on all processors were cleared.
@@ -136,7 +142,7 @@ TestDuplicateHardwareBreakpoints()
         "Installing access breakpoints at 0x%IX\n",
         (ULONG_PTR)&g_AccessTarget);
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         1,
         (ULONG_PTR)&g_AccessTarget,
@@ -145,11 +151,11 @@ TestDuplicateHardwareBreakpoints()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (access) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (access) failed: %u\n",
             GetLastError());
     }
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         2,
         (ULONG_PTR)&g_AccessTarget,
@@ -158,11 +164,11 @@ TestDuplicateHardwareBreakpoints()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (access) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (access) failed: %u\n",
             GetLastError());
     }
 
-    status = DrvSetHardwareBreakpoint(
+    status = VivienneIoSetHardwareBreakpoint(
         GetCurrentProcessId(),
         3,
         (ULONG_PTR)&g_AccessTarget,
@@ -171,7 +177,7 @@ TestDuplicateHardwareBreakpoints()
     if (!status)
     {
         FAIL_TEST(
-            "DrvSetHardwareBreakpoint (access) failed: %u\n",
+            "VivienneIoSetHardwareBreakpoint (access) failed: %u\n",
             GetLastError());
     }
 
@@ -180,14 +186,14 @@ TestDuplicateHardwareBreakpoints()
 
     for (ULONG i = 0; i < NUMBER_OF_ITERATIONS; ++i)
     {
-        // Trigger the breakpoints.
-        DWORD Value = g_AccessTarget;
-
         // Stealth check.
         if (!BreakpointStealthCheck())
         {
             FAIL_TEST("BreakpointStealthCheck failed.\n");
         }
+
+        // Trigger the breakpoints.
+        Value = g_AccessTarget;
 
         // Delay execution to allow the driver log buffer to flush.
         Sleep(SLEEP_DURATION_MS);
@@ -197,13 +203,14 @@ TestDuplicateHardwareBreakpoints()
 
     // Clear all breakpoints.
     status =
-        DrvClearHardwareBreakpoint(0) &&
-        DrvClearHardwareBreakpoint(1) &&
-        DrvClearHardwareBreakpoint(2) &&
-        DrvClearHardwareBreakpoint(3);
+        VivienneIoClearHardwareBreakpoint(0) &&
+        VivienneIoClearHardwareBreakpoint(1) &&
+        VivienneIoClearHardwareBreakpoint(2) &&
+        VivienneIoClearHardwareBreakpoint(3);
     if (!status)
     {
-        FAIL_TEST("DrvClearHardwareBreakpoint failed: %u.\n", GetLastError());
+        FAIL_TEST("VivienneIoClearHardwareBreakpoint failed: %u.\n",
+            GetLastError());
     }
 
     // Verify that all debug registers on all processors were cleared.

@@ -31,8 +31,22 @@ RunAllTests()
 {
     printf("Running all tests...\n\n");
 
+    //
     // Convenience break into the debugger.
+    //
     DEBUGBREAK;
+
+    //
+    // Parser test cases.
+    //
+    TestTokenParser();
+    Sleep(TEST_DELAY_DURATION_MS);
+
+    //
+    // BPM test cases.
+    //
+    TestReadDebugRegister();
+    Sleep(TEST_DELAY_DURATION_MS);
 
     TestSetClearHardwareBreakpoint();
     Sleep(TEST_DELAY_DURATION_MS);
@@ -46,13 +60,34 @@ RunAllTests()
     TestDuplicateHardwareBreakpoints();
     Sleep(TEST_DELAY_DURATION_MS);
 
-    TestCaptureUniqueRegisterValues();
+    //
+    // CECR test cases.
+    //
+    TestCaptureRegisterValues();
     Sleep(TEST_DELAY_DURATION_MS);
 
-    TestCaptureUniqueRegisterValuesEdgeCases();
+    TestCaptureRegisterValuesEdgeCases();
     Sleep(TEST_DELAY_DURATION_MS);
 
-#ifdef CFG_ENABLE_DR_FACADE
+    //
+    // CECM test cases.
+    //
+    TestCaptureMemoryValues();
+    Sleep(TEST_DELAY_DURATION_MS);
+
+    TestCaptureMemoryValuesFpuState();
+    Sleep(TEST_DELAY_DURATION_MS);
+
+    TestAntiDebugCecmTrapPage();
+    Sleep(TEST_DELAY_DURATION_MS);
+
+    TestAntiDebugCecmSpanningPage();
+    Sleep(TEST_DELAY_DURATION_MS);
+
+#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
+    //
+    // FCD test cases.
+    //
     TestDebugRegisterFacade();
     Sleep(TEST_DELAY_DURATION_MS);
 
@@ -63,6 +98,9 @@ RunAllTests()
     Sleep(TEST_DELAY_DURATION_MS);
 #endif
 
+    //
+    // General anti-debug test cases.
+    //
     TestAntiDebugSingleStep();
     Sleep(TEST_DELAY_DURATION_MS);
 
@@ -78,7 +116,7 @@ static
 __cdecl
 ProcessTerminationHandler()
 {
-    (VOID)DrvTermination();
+    VivienneIoTermination();
 }
 
 
@@ -93,9 +131,9 @@ main(
 {
     int mainstatus = TEST_FAILURE;
 
-    if (!DrvInitialization())
+    if (!VivienneIoInitialization())
     {
-        printf("DrvInitialization failed: %u\n", GetLastError());
+        printf("VivienneIoInitialization failed: %u\n", GetLastError());
         goto exit;
     }
 

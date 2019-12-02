@@ -1,7 +1,12 @@
 /*++
 
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
 Module Name:
-    
+
     time_util.h
 
 Abstract:
@@ -26,8 +31,6 @@ Environment:
 #include <Windows.h>
 #endif
 
-static_assert(sizeof(LONGLONG) == sizeof(LARGE_INTEGER), "Size check");
-
 //=============================================================================
 // Constants and Macros
 //=============================================================================
@@ -39,23 +42,27 @@ static_assert(sizeof(LONGLONG) == sizeof(LARGE_INTEGER), "Size check");
 #define SECONDS_TO_MICROSECONDS(Seconds) (Seconds * SECOND_IN_MICROSECONDS)
 #define SECONDS_TO_NANOSECONDS(Seconds)  (Seconds * SECOND_IN_NANOSECONDS)
 
+//
 // Relative interval for NtDelayExecution.
+//
 #define MILLISECONDS_TO_RELATIVE_NTINTERVAL(Milliseconds) \
     ((LONGLONG)Milliseconds * (-10000))
 
 //=============================================================================
 // Meta Interface
 //=============================================================================
-_Check_return_
 #ifdef _KERNEL_MODE
+_Check_return_
 NTSTATUS
+TiDriverEntry();
 #else
+_Check_return_
 BOOL
-#endif
 TiInitialization();
+#endif
 
 //=============================================================================
-// Client Interface
+// Public Interface
 //=============================================================================
 _Check_return_
 LONGLONG

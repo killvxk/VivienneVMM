@@ -1,7 +1,9 @@
 #include "test_util.h"
 
+#include <cstdio>
 #include <iostream>
 #include <intrin.h>
+#include <limits.h>
 #include <time.h>
 
 #include "..\common\arch_x64.h"
@@ -51,6 +53,7 @@ InitializeRngSeed()
 // Print a message to instruct the user to configure their debugger's exception
 //  handling settings.
 //
+_Use_decl_annotations_
 VOID
 PromptDebuggerExceptionConfiguration(
     PCSTR pszPromptMessage,
@@ -188,48 +191,53 @@ iSetThreadLocalHardwareBreakpoint(
 
     switch (Index)
     {
+        //
+        // Dr0
+        //
         case 0:
-        {
-            // Dr0.
             Context.Dr0 = Address;
             NewDr7.L0 = Enable;
             NewDr7.RW0 = (UCHAR)Type;
             NewDr7.Len0 = (UCHAR)Size;
             break;
-        }
+
+        //
+        // Dr1
+        //
         case 1:
-        {
-            // Dr1.
             Context.Dr1 = Address;
             NewDr7.L1 = Enable;
             NewDr7.RW1 = (UCHAR)Type;
             NewDr7.Len1 = (UCHAR)Size;
             break;
-        }
+
+        //
+        // Dr2
+        //
         case 2:
-        {
-            // Dr2.
             Context.Dr2 = Address;
             NewDr7.L2 = Enable;
             NewDr7.RW2 = (UCHAR)Type;
             NewDr7.Len2 = (UCHAR)Size;
             break;
-        }
+
+        //
+        // Dr3
+        //
         case 3:
-        {
-            // Dr3.
             Context.Dr3 = Address;
             NewDr7.L3 = Enable;
             NewDr7.RW3 = (UCHAR)Type;
             NewDr7.Len3 = (UCHAR)Size;
             break;
-        }
+
+        //
+        // Invalid debug address register index.
+        //
         default:
-        {
             printf("Invalid debug address register index.\n");
             status = FALSE;
             goto exit;
-        }
     }
 
     Context.Dr7 = NewDr7.All;
@@ -337,9 +345,10 @@ VerifyThreadLocalBreakpointByIndex(
 
     switch (Index)
     {
+        //
+        // Dr0
+        //
         case 0:
-        {
-            // Dr0.
             if (Address != Context.Dr0 ||
                 Type != (HWBP_TYPE)ActualDr7.RW0 ||
                 Size != (HWBP_SIZE)ActualDr7.Len0)
@@ -349,10 +358,11 @@ VerifyThreadLocalBreakpointByIndex(
             }
 
             break;
-        }
+
+        //
+        // Dr1
+        //
         case 1:
-        {
-            // Dr1.
             if (Address != Context.Dr1 ||
                 Type != (HWBP_TYPE)ActualDr7.RW1 ||
                 Size != (HWBP_SIZE)ActualDr7.Len1)
@@ -362,10 +372,11 @@ VerifyThreadLocalBreakpointByIndex(
             }
 
             break;
-        }
+
+        //
+        // Dr2
+        //
         case 2:
-        {
-            // Dr2.
             if (Address != Context.Dr2 ||
                 Type != (HWBP_TYPE)ActualDr7.RW2 ||
                 Size != (HWBP_SIZE)ActualDr7.Len2)
@@ -375,10 +386,11 @@ VerifyThreadLocalBreakpointByIndex(
             }
 
             break;
-        }
+
+        //
+        // Dr3
+        //
         case 3:
-        {
-            // Dr3.
             if (Address != Context.Dr3 ||
                 Type != (HWBP_TYPE)ActualDr7.RW3 ||
                 Size != (HWBP_SIZE)ActualDr7.Len3)
@@ -388,13 +400,14 @@ VerifyThreadLocalBreakpointByIndex(
             }
 
             break;
-        }
+
+        //
+        // Invalid debug address register index.
+        //
         default:
-        {
             printf("Invalid index: %u\n", Index);
             status = FALSE;
             goto exit;
-        }
     }
 
 exit:
@@ -438,7 +451,7 @@ AreAllHardwareBreakpointsCleared()
 
     // Multi-processor systems will fail the initial query to obtain the
     //  required struct size.
-    if (!DrvQuerySystemDebugState(pSystemDebugState, cbSystemDebugState))
+    if (!VivienneIoQuerySystemDebugState(pSystemDebugState, cbSystemDebugState))
     {
         RequiredSize = pSystemDebugState->Size;
 
@@ -460,11 +473,12 @@ AreAllHardwareBreakpointsCleared()
             goto exit;
         }
 
-        status = DrvQuerySystemDebugState(pSystemDebugState, RequiredSize);
+        status =
+            VivienneIoQuerySystemDebugState(pSystemDebugState, RequiredSize);
         if (!status)
         {
             printf(
-                "DrvQuerySystemDebugState failed twice: %u\n",
+                "VivienneIoQuerySystemDebugState failed twice: %u\n",
                 GetLastError());
             goto exit;
         }
@@ -564,6 +578,7 @@ ClearThreadLocalHardwareBreakpoint(
 //
 // GenerateRandomValue
 //
+_Use_decl_annotations_
 ULONG
 GenerateRandomValue()
 {
@@ -574,10 +589,11 @@ GenerateRandomValue()
 //
 // GenerateBoundedRandomValue
 //
+_Use_decl_annotations_
 ULONG_PTR
 GenerateBoundedRandomValue(
-    _In_ ULONG_PTR MinValue,
-    _In_ ULONG_PTR MaxValue
+    ULONG_PTR MinValue,
+    ULONG_PTR MaxValue
 )
 {
     return (GenerateRandomValue() % MaxValue) + MinValue;
@@ -587,24 +603,24 @@ GenerateBoundedRandomValue(
 //
 // GenerateUniqueRandomValues
 //
-// This function exists because TestCaptureUniqueRegisterValues generated a
-//  duplicate value once which caused the CURV request to return one less than
+// This function exists because TestCaptureRegisterValues generated a
+//  duplicate value once which caused the CECR request to return one less than
 //  the expected value.
 //
 _Use_decl_annotations_
 VOID
 GenerateUniqueRandomValues(
-    ULONG pValues[],
-    ULONG cValues
+    ULONG_PTR pValues[],
+    SIZE_T cValues
 )
 {
-    for (ULONG i = 0; i < cValues; ++i)
+    for (SIZE_T i = 0; i < cValues; ++i)
     {
-        ULONG RandomValue = GenerateRandomValue();
+        ULONG_PTR RandomValue = GenerateBoundedRandomValue(0, SIZE_MAX);
         BOOLEAN Duplicate = FALSE;
 
         // Check that this random value is not already in the array.
-        for (ULONG j = 0; j < cValues; ++j)
+        for (SIZE_T j = 0; j < cValues; ++j)
         {
             if (pValues[j] == RandomValue)
             {

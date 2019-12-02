@@ -1,7 +1,12 @@
 /*++
 
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
 Module Name:
-    
+
     debug_register_facade.h
 
 Abstract:
@@ -22,30 +27,36 @@ Environment:
 
 #include <fltKernel.h>
 
-#include "HyperPlatform\ia32_type.h"
+#include "HyperPlatform\HyperPlatform\ia32_type.h"
 
 //=============================================================================
 // Meta Interface
 //=============================================================================
 _Check_return_
 NTSTATUS
-FcdInitialization();
+FcdDriverEntry();
 
-_Check_return_
-NTSTATUS
-FcdTermination();
+VOID
+FcdDriverUnload();
 
 _IRQL_requires_(HIGH_LEVEL)
 VOID
-FcdVmxInitialization();
+FcdVmxDriverEntry();
 
 _IRQL_requires_(HIGH_LEVEL)
 VOID
-FcdVmxTermination();
+FcdVmxDriverUnload();
 
 //=============================================================================
 // Vmx Interface
 //=============================================================================
+_IRQL_requires_(HIGH_LEVEL)
+VOID
+FcdVmxLogMovDrEvent(
+    _In_ MovDrQualification ExitQualification,
+    _In_ PULONG_PTR pRegisterUsed
+);
+
 _IRQL_requires_(HIGH_LEVEL)
 _Check_return_
 NTSTATUS

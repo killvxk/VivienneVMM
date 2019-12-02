@@ -1,3 +1,12 @@
+/*++
+
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
+--*/
+
 #include <Windows.h>
 
 #include <iostream>
@@ -7,56 +16,32 @@
 #include <vector>
 
 #include "commands.h"
+#include "debug.h"
 #include "driver_io.h"
+#include "log.h"
+#include "string_util.h"
 
 
-#define VVMM_SUCCESS 0
-#define VVMM_FAILURE 1
-
-
-//
-// TokenizeString
-//
 static
 VOID
-TokenizeString(
-    _In_ std::string& Input,
-    _Out_ std::vector<std::string>& Output
-)
-{
-    std::string Token;
-    std::stringstream Stream(Input);
-
-    Output = {
-        std::istream_iterator<std::string>{Stream},
-        std::istream_iterator<std::string>{}
-    };
-}
-
-
-//
-// ProcessCommands
-//
-static
-int
 ProcessCommands()
 {
-    int status = VVMM_FAILURE;
-
     for (;;)
     {
         std::string Input;
         std::string Command;
         std::vector<std::string> ArgTokens;
 
+        //
         // Prompt and tokenize input.
+        //
         std::cout << "> ";
         std::getline(std::cin, Input);
 
-        TokenizeString(Input, ArgTokens);
-
+        //
         // Skip empty lines.
-        if (!ArgTokens.size())
+        //
+        if (!StrSplitStringByWhitespace(Input, ArgTokens))
         {
             std::cin.clear();
             continue;
@@ -64,15 +49,16 @@ ProcessCommands()
 
         Command = ArgTokens[0];
 
+        //
         // Dispatch Commands.
+        //
         if (CMD_EXITCLIENT == Command)
         {
-            status = VVMM_SUCCESS;
             break;
         }
         else if (CMD_HELP == Command)
         {
-            (VOID)CmdDisplayCommands(ArgTokens);
+            (VOID)CmdDisplayHelpText(ArgTokens);
         }
         else if (CMD_COMMANDS == Command)
         {
@@ -94,60 +80,69 @@ ProcessCommands()
         {
             (VOID)CmdClearHardwareBreakpoint(ArgTokens);
         }
-        else if (CMD_CAPTUREUNIQUEREGVALS == Command)
+        else if (CMD_CEC_REGISTER == Command)
         {
-            (VOID)CmdCaptureUniqueRegisterValues(ArgTokens);
+            (VOID)CmdCaptureRegisterValues(ArgTokens);
+        }
+        else if (CMD_CEC_MEMORY == Command)
+        {
+            (VOID)CmdCaptureMemoryValues(ArgTokens);
         }
         else
         {
-            printf("Invalid command.\n");
+            ERR_PRINT("Invalid command.");
         }
 
+        //
         // Prepare next line.
+        //
         std::cout << std::endl;
         std::cin.clear();
     }
-
-    return status;
 }
 
 
-//
-// ProcessTerminationHandler
-//
 VOID
 __cdecl
 ProcessTerminationHandler()
 {
-    (VOID)DrvTermination();
+    VivienneIoTermination();
 }
 
 
-//
-// main
-//
 int
 main(
     _In_ int argc,
     _In_ char* argv[]
 )
 {
-    int mainstatus = VVMM_FAILURE;
+    int mainstatus = EXIT_SUCCESS;
 
-    if (!DrvInitialization())
+    if (!LogInitialization(LOG_CONFIG_STDOUT))
     {
-        printf("DrvInitialization failed: %u\n", GetLastError());
+        mainstatus = EXIT_FAILURE;
+        DEBUG_BREAK;
         goto exit;
     }
 
+    if (!VivienneIoInitialization())
+    {
+        ERR_PRINT("VivienneIoInitialization failed: %u", GetLastError());
+        mainstatus = EXIT_FAILURE;
+        goto exit;
+    }
+
+    //
     // Register a termination handler for cleanup.
+    //
     if (atexit(ProcessTerminationHandler))
     {
-        printf("atexit failed.\n");
+        ERR_PRINT("atexit failed.");
+        mainstatus = EXIT_FAILURE;
         goto exit;
     }
 
-    mainstatus = ProcessCommands();
+    ProcessCommands();
 
 exit:
     return mainstatus;

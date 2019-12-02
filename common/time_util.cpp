@@ -1,5 +1,10 @@
 /*++
 
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
 Module Name:
 
     time_util.cpp
@@ -21,9 +26,9 @@ Environment:
 #include "time_util.h"
 
 #ifdef _KERNEL_MODE
-#include "..\VivienneVMM\log_util.h"
+#include "..\VivienneVMM\log.h"
 #else
-#include <cstdio>
+#include "..\VivienneCL\log.h"
 #endif
 
 
@@ -36,20 +41,14 @@ static LARGE_INTEGER g_ProcessorFrequency = {};
 //=============================================================================
 // Meta Interface
 //=============================================================================
-
-//
-// TiInitialization
-//
 #ifdef _KERNEL_MODE
 
 _Use_decl_annotations_
 NTSTATUS
-TiInitialization()
+TiDriverEntry()
 {
     LARGE_INTEGER Frequency = {};
     NTSTATUS ntstatus = STATUS_SUCCESS;
-
-    info_print("Initializing time util.");
 
     (VOID)KeQueryPerformanceCounter(&Frequency);
     if (!Frequency.QuadPart)
@@ -60,7 +59,7 @@ TiInitialization()
 
     g_ProcessorFrequency.QuadPart = Frequency.QuadPart;
 
-    info_print(
+    INF_PRINT(
         "Processor frequency: %lld (0x%llX)",
         g_ProcessorFrequency.QuadPart,
         g_ProcessorFrequency.QuadPart);
@@ -78,8 +77,6 @@ TiInitialization()
     LARGE_INTEGER Frequency = {};
     BOOL status = TRUE;
 
-    printf("Initializing time util.\n");
-
     if (!QueryPerformanceFrequency(&Frequency))
     {
         status = FALSE;
@@ -88,8 +85,8 @@ TiInitialization()
 
     g_ProcessorFrequency.QuadPart = Frequency.QuadPart;
 
-    printf(
-        "Processor frequency: %lld (0x%llX)\n",
+    INF_PRINT(
+        "Processor frequency: %lld (0x%llX)",
         g_ProcessorFrequency.QuadPart,
         g_ProcessorFrequency.QuadPart);
 
@@ -101,12 +98,8 @@ exit:
 
 
 //=============================================================================
-// Client Interface
+// Public Interface
 //=============================================================================
-
-//
-// TiGetProcessorFrequency
-//
 _Use_decl_annotations_
 LONGLONG
 TiGetProcessorFrequency()
@@ -115,9 +108,6 @@ TiGetProcessorFrequency()
 }
 
 
-//
-// TiMillisecondsToTicks
-//
 _Use_decl_annotations_
 LONGLONG
 TiMillisecondsToTicks(
@@ -129,9 +119,6 @@ TiMillisecondsToTicks(
 }
 
 
-//
-// TiMicrosecondsToTicks
-//
 _Use_decl_annotations_
 LONGLONG
 TiMicrosecondsToTicks(
@@ -143,9 +130,6 @@ TiMicrosecondsToTicks(
 }
 
 
-//
-// TiTicksToMilliseconds
-//
 _Use_decl_annotations_
 LONGLONG
 TiTicksToMilliseconds(
@@ -157,9 +141,6 @@ TiTicksToMilliseconds(
 }
 
 
-//
-// TiTicksToMicroseconds
-//
 _Use_decl_annotations_
 LONGLONG
 TiTicksToMicroseconds(

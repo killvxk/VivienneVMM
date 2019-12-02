@@ -1,20 +1,25 @@
 /*++
 
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
 Module Name:
-    
-    vivienne.h
+
+vivienne.h
 
 Abstract:
 
-    This header defines the VivienneVMM interface.
+This header defines the VivienneVMM interface.
 
 Author:
 
-    changeofpace
+changeofpace
 
 Environment:
 
-    Kernel mode only.
+Kernel mode only.
 
 --*/
 
@@ -25,15 +30,29 @@ Environment:
 //=============================================================================
 // Meta Interface
 //=============================================================================
-_Check_return_
-NTSTATUS
-VvmmInitialization(
-    _In_ PDRIVER_OBJECT pDriverObject,
-    _In_ PUNICODE_STRING pRegistryPath
-);
+EXTERN_C
+DRIVER_INITIALIZE
+VivienneVmmDriverEntry;
 
-_Check_return_
-NTSTATUS
-VvmmTermination(
-    _In_ PDRIVER_OBJECT pDriverObject
-);
+EXTERN_C
+DRIVER_UNLOAD
+VivienneVmmDriverUnload;
+
+//=============================================================================
+// Public Interface
+//=============================================================================
+_Dispatch_type_(IRP_MJ_CREATE)
+DRIVER_DISPATCH
+VivienneVmmDispatchCreate;
+
+_Dispatch_type_(IRP_MJ_CLOSE)
+DRIVER_DISPATCH
+VivienneVmmDispatchClose;
+
+_Dispatch_type_(IRP_MJ_CLEANUP)
+DRIVER_DISPATCH
+VivienneVmmDispatchCleanup;
+
+_Dispatch_type_(IRP_MJ_DEVICE_CONTROL)
+DRIVER_DISPATCH
+VivienneVmmDispatchDeviceControl;

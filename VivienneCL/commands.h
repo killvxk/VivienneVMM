@@ -1,3 +1,12 @@
+/*++
+
+Copyright (c) 2019 changeofpace. All rights reserved.
+
+Use of this source code is governed by the MIT license. See the 'LICENSE' file
+for more information.
+
+--*/
+
 #pragma once
 
 #include <Windows.h>
@@ -10,7 +19,8 @@
 //=============================================================================
 #define CMD_CLEARHARDWAREBREAKPOINT "clear"
 #define CMD_COMMANDS                "commands"
-#define CMD_CAPTUREUNIQUEREGVALS    "curv"
+#define CMD_CEC_REGISTER            "cecr"
+#define CMD_CEC_MEMORY              "cecm"
 #define CMD_EXITCLIENT              "exit"
 #define CMD_HELP                    "help"
 #define CMD_LOOKUPPROCESSIDBYNAME   "pid"
@@ -52,6 +62,18 @@ CmdClearHardwareBreakpoint(
 
 _Check_return_
 BOOL
-CmdCaptureUniqueRegisterValues(
+CmdCaptureRegisterValues(
+    _In_ const std::vector<std::string>& ArgTokens
+);
+
+_Check_return_
+BOOL
+CmdCaptureMemoryValues(
+    _In_ const std::vector<std::string>& ArgTokens
+);
+
+_Check_return_
+BOOL
+CmdDisplayHelpText(
     _In_ const std::vector<std::string>& ArgTokens
 );
