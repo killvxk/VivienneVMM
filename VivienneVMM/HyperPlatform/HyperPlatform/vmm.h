@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2018, Satoshi Tanda. All rights reserved.
+// Copyright (c) 2015-2019, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,9 @@
 #ifndef HYPERPLATFORM_VMM_H_
 #define HYPERPLATFORM_VMM_H_
 
-#include <fltKernel.h>
+#include <ntddk.h>
+
+#include "ia32_type.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -29,8 +31,8 @@
 struct SharedProcessorData {
   volatile long reference_count;  //!< Number of processors sharing this data
   void* msr_bitmap;               //!< Bitmap to activate MSR I/O VM-exit
-  void* io_bitmap_a;              //!< Bitmap to activate IO VM-exit (~ 0x7FFF)
-  void* io_bitmap_b;              //!< Bitmap to activate IO VM-exit (~ 0xffff)
+  //void* io_bitmap_a;              //!< Bitmap to activate IO VM-exit (~ 0x7FFF)
+  //void* io_bitmap_b;              //!< Bitmap to activate IO VM-exit (~ 0xffff)
 };
 
 /// Represents VMM related data associated with each processor
@@ -50,9 +52,11 @@ struct KtrapFrameX86 {
   ULONG sp;  //!< Called HardwareEsp in _KTRAP_FRAME
   ULONG reserved3[5];
 };
-static_assert(sizeof(KtrapFrameX86) == 0x8c);
-static_assert(FIELD_OFFSET(KtrapFrameX86, ip) == 0x68);
-static_assert(FIELD_OFFSET(KtrapFrameX86, sp) == 0x74);
+static_assert(sizeof(KtrapFrameX86) == 0x8c, "structure size mismatch");
+#if !defined(__clang__)
+static_assert(FIELD_OFFSET(KtrapFrameX86, ip) == 0x68, "structure size mismatch");
+static_assert(FIELD_OFFSET(KtrapFrameX86, sp) == 0x74, "structure size mismatch");
+#endif
 
 /// nt!_KTRAP_FRAME on x64
 struct KtrapFrameX64 {
@@ -62,9 +66,11 @@ struct KtrapFrameX64 {
   ULONG64 sp;  //!< Called Rsp in _KTRAP_FRAME
   ULONG64 reserved3;
 };
-static_assert(sizeof(KtrapFrameX64) == 0x190);
-static_assert(FIELD_OFFSET(KtrapFrameX64, ip) == 0x168);
-static_assert(FIELD_OFFSET(KtrapFrameX64, sp) == 0x180);
+static_assert(sizeof(KtrapFrameX64) == 0x190, "structure size mismatch");
+#if !defined(__clang__)
+static_assert(FIELD_OFFSET(KtrapFrameX64, ip) == 0x168, "structure size mismatch");
+static_assert(FIELD_OFFSET(KtrapFrameX64, sp) == 0x180, "structure size mismatch");
+#endif
 
 /// See: Stack Usage on Transfers to Interrupt and Exception-Handling Routines
 struct MachineFrame {
@@ -79,6 +85,31 @@ struct MachineFrame {
 using KtrapFrame = KtrapFrameX64;
 #else
 using KtrapFrame = KtrapFrameX86;
+#endif
+
+// Represents raw structure of stack of VMM when VmmVmExitHandler() is called
+struct VmmInitialStack {
+  GpRegisters gp_regs;
+  KtrapFrame trap_frame;
+  ProcessorData *processor_data;
+};
+
+// Things need to be read and written by each VM-exit handler
+struct GuestContext {
+  union {
+    VmmInitialStack *stack;
+    GpRegisters *gp_regs;
+  };
+  FlagRegister flag_reg;
+  ULONG_PTR ip;
+  ULONG_PTR cr8;
+  KIRQL irql;
+  bool vm_continue;
+};
+#if defined(_AMD64_)
+static_assert(sizeof(GuestContext) == 40, "Size check");
+#else
+static_assert(sizeof(GuestContext) == 20, "Size check");
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////

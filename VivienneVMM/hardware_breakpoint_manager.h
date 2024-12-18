@@ -1,13 +1,13 @@
 /*++
 
-Copyright (c) 2019 changeofpace. All rights reserved.
+Copyright (c) 2019-2020 changeofpace. All rights reserved.
 
 Use of this source code is governed by the MIT license. See the 'LICENSE' file
 for more information.
 
 Module Name:
 
-    breakpoint_manager.h
+    hardware_breakpoint_manager.h
 
 Abstract:
 
@@ -25,7 +25,7 @@ Environment:
 
 #pragma once
 
-#include <fltKernel.h>
+#include <ntddk.h>
 
 #include "breakpoint_callback.h"
 
@@ -50,24 +50,24 @@ typedef struct _HARDWARE_BREAKPOINT {
 //=============================================================================
 _Check_return_
 NTSTATUS
-BpmDriverEntry();
+HbmDriverEntry();
 
 VOID
-BpmDriverUnload();
+HbmDriverUnload();
 
 //=============================================================================
-// Public Interface
+// Public Vmx Non-Root Interface
 //=============================================================================
 _Check_return_
 NTSTATUS
-BpmQuerySystemDebugState(
+HbmQuerySystemDebugState(
     _Out_ PSYSTEM_DEBUG_STATE pSystemDebugState,
     _In_ ULONG cbSystemDebugState
 );
 
 _Check_return_
 NTSTATUS
-BpmInitializeBreakpoint(
+HbmInitializeBreakpoint(
     _In_ ULONG_PTR ProcessId,
     _In_ ULONG Index,
     _In_ ULONG_PTR Address,
@@ -76,18 +76,9 @@ BpmInitializeBreakpoint(
     _Out_ PHARDWARE_BREAKPOINT pBreakpoint
 );
 
-//
-// TODO Add support for automatically setting host CR3 to the directory table
-//  of the target process. The 'set breakpoint' functions should accept a
-//  boolean parameter which indicates if the host CR3 should be updated before
-//  the callback is invoked.
-//
-// TODO Research the side effects of modifying host CR3.
-//  See: 4.10.4.1 Operations that Invalidate TLBs and Paging-Structure Caches
-//
 _Check_return_
 NTSTATUS
-BpmSetHardwareBreakpoint(
+HbmSetHardwareBreakpoint(
     _In_ PHARDWARE_BREAKPOINT pBreakpoint,
     _In_ FPBREAKPOINT_CALLBACK pCallbackFn,
     _In_opt_ PVOID pCallbackCtx
@@ -95,7 +86,7 @@ BpmSetHardwareBreakpoint(
 
 _Check_return_
 NTSTATUS
-BpmSetHardwareBreakpoint(
+HbmSetHardwareBreakpoint(
     _In_ ULONG_PTR ProcessId,
     _In_ ULONG Index,
     _In_ ULONG_PTR Address,
@@ -107,28 +98,27 @@ BpmSetHardwareBreakpoint(
 
 _Check_return_
 NTSTATUS
-BpmClearHardwareBreakpoint(
+HbmClearHardwareBreakpoint(
     _In_ ULONG Index
 );
 
 _Check_return_
 NTSTATUS
-BpmCleanupBreakpoints();
+HbmCleanupBreakpoints();
 
 //=============================================================================
-// Vmx Interface
+// Public Vmx Root Interface
 //=============================================================================
 _IRQL_requires_(HIGH_LEVEL)
-_Check_return_
-NTSTATUS
-BpmVmxSetHardwareBreakpoint(
+VOID
+HbmxSetHardwareBreakpoint(
     _In_ PVOID pVmxContext
 );
 
 _IRQL_requires_(HIGH_LEVEL)
 _Check_return_
 NTSTATUS
-BpmVmxProcessDebugExceptionEvent(
+HbmxProcessDebugExceptionEvent(
     _Inout_ GpRegisters* pGuestRegisters,
     _Inout_ FlagRegister* pGuestFlags,
     _In_ PULONG_PTR pGuestIp

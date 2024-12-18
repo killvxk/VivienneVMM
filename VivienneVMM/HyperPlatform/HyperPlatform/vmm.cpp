@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2018, Satoshi Tanda. All rights reserved.
+// Copyright (c) 2015-2019, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -14,9 +14,11 @@
 #include "util.h"
 #include "performance.h"
 
-#include "..\..\breakpoint_manager.h"
-#include "..\..\config.h"
+#include "../../../common/config.h"
+
 #include "..\..\debug_register_facade.h"
+#include "..\..\ept_breakpoint_manager.h"
+#include "..\..\hardware_breakpoint_manager.h"
 #include "..\..\log.h"
 
 extern "C" {
@@ -43,31 +45,6 @@ static const long kVmmpNumberOfProcessors = 2;
 //
 // types
 //
-
-// Represents raw structure of stack of VMM when VmmVmExitHandler() is called
-struct VmmInitialStack {
-  GpRegisters gp_regs;
-  KtrapFrame trap_frame;
-  ProcessorData *processor_data;
-};
-
-// Things need to be read and written by each VM-exit handler
-struct GuestContext {
-  union {
-    VmmInitialStack *stack;
-    GpRegisters *gp_regs;
-  };
-  FlagRegister flag_reg;
-  ULONG_PTR ip;
-  ULONG_PTR cr8;
-  KIRQL irql;
-  bool vm_continue;
-};
-#if defined(_AMD64_)
-static_assert(sizeof(GuestContext) == 40, "Size check");
-#else
-static_assert(sizeof(GuestContext) == 20, "Size check");
-#endif
 
 // Context at the moment of vmexit
 struct VmExitHistory {
@@ -136,7 +113,8 @@ static void VmmpHandleInvalidateTlbEntry(_Inout_ GuestContext *guest_context);
 
 static void VmmpHandleEptViolation(_Inout_ GuestContext *guest_context);
 
-static void VmmpHandleEptMisconfig(_Inout_ GuestContext *guest_context);
+DECLSPEC_NORETURN static void VmmpHandleEptMisconfig(
+    _Inout_ GuestContext *guest_context);
 
 static ULONG_PTR *VmmpSelectRegister(_In_ ULONG index,
                                      _In_ GuestContext *guest_context);
@@ -225,9 +203,10 @@ _Use_decl_annotations_ bool __stdcall VmmVmExitHandler(VmmInitialStack *stack) {
   }
 
   // Apply possibly updated CR8 by the handler
-  if constexpr (IsX64()) {
+  if (IsX64()) {
     __writecr8(guest_context.cr8);
   }
+
   return guest_context.vm_continue;
 }
 #pragma warning(pop)
@@ -262,7 +241,7 @@ _Use_decl_annotations_ static void VmmpHandleVmExit(
       break;
     case VmxExitReason::kTripleFault:
       VmmpHandleTripleFault(guest_context);
-      break;
+      /* UNREACHABLE */
     case VmxExitReason::kCpuid:
       VmmpHandleCpuid(guest_context);
       break;
@@ -304,7 +283,7 @@ _Use_decl_annotations_ static void VmmpHandleVmExit(
       break;
     case VmxExitReason::kEptMisconfig:
       VmmpHandleEptMisconfig(guest_context);
-      break;
+      /* UNREACHABLE */
     case VmxExitReason::kVmcall:
       VmmpHandleVmCall(guest_context);
       break;
@@ -317,10 +296,6 @@ _Use_decl_annotations_ static void VmmpHandleVmExit(
     case VmxExitReason::kVmwrite:
     case VmxExitReason::kVmoff:
     case VmxExitReason::kVmon:
-    case VmxExitReason::kInvept:
-    case VmxExitReason::kInvvpid:
-      VmmpHandleVmx(guest_context);
-      break;
     case VmxExitReason::kRdtscp:
       VmmpHandleRdtscp(guest_context);
       break;
@@ -329,7 +304,7 @@ _Use_decl_annotations_ static void VmmpHandleVmExit(
       break;
     default:
       VmmpHandleUnexpectedExit(guest_context);
-      break;
+      /* UNREACHABLE */
   }
 }
 
@@ -355,10 +330,7 @@ _Use_decl_annotations_ static void VmmpHandleUnexpectedExit(
 // MTF VM-exit
 _Use_decl_annotations_ static void VmmpHandleMonitorTrap(
     GuestContext *guest_context) {
-  VmmpDumpGuestState();
-  HYPERPLATFORM_COMMON_BUG_CHECK(HyperPlatformBugCheck::kUnexpectedVmExit,
-                                 reinterpret_cast<ULONG_PTR>(guest_context),
-                                 guest_context->ip, 0);
+  EbmxHandleMonitorTrapFlag(guest_context);
 }
 
 // Interrupt
@@ -397,7 +369,7 @@ _Use_decl_annotations_ static void VmmpHandleException(
     } else if (vector == InterruptionVector::kDebugException) {
       // #DB
 #pragma warning(suppress : 28123) // Call not permitted at high IRQ level.
-      NTSTATUS ntstatus = BpmVmxProcessDebugExceptionEvent(
+      NTSTATUS ntstatus = HbmxProcessDebugExceptionEvent(
         guest_context->gp_regs,
         &guest_context->flag_reg,
         &guest_context->ip);
@@ -445,13 +417,13 @@ _Use_decl_annotations_ static void VmmpHandleCpuid(
 
   if (function_id == 1) {
     // Present existence of a hypervisor using the HypervisorPresent bit
-    CpuFeaturesEcx cpu_features = {static_cast<ULONG_PTR>(cpu_info[2])};
+    CpuFeaturesEcx cpu_features = {static_cast<ULONG32>(cpu_info[2])};
     cpu_features.fields.not_used = true;
     cpu_info[2] = static_cast<int>(cpu_features.all);
   } else if (function_id == kHyperVCpuidInterface) {
     // Leave signature of HyperPlatform onto EAX
     // NOTE This signature can be used as a VM detection vector.
-    cpu_info[0] = CFG_VVMM_SIGNATURE;
+    cpu_info[0] = CFG_NAME_VIVIENNE_SIGNATURE;
   }
 
   guest_context->gp_regs->ax = cpu_info[0];
@@ -611,9 +583,6 @@ _Use_decl_annotations_ static void VmmpHandleGdtrOrIdtrAccess(
         instruction_info.fields.index_register, guest_context);
     index_value = *register_used;
     switch (static_cast<Scaling>(instruction_info.fields.scalling)) {
-      case Scaling::kNoScaling:
-        index_value = index_value;
-        break;
       case Scaling::kScaleBy2:
         index_value = index_value * 2;
         break;
@@ -756,9 +725,6 @@ _Use_decl_annotations_ static void VmmpHandleLdtrOrTrAccess(
           instruction_info.fields.index_register, guest_context);
       index_value = *register_used;
       switch (static_cast<Scaling>(instruction_info.fields.scalling)) {
-        case Scaling::kNoScaling:
-          index_value = index_value;
-          break;
         case Scaling::kScaleBy2:
           index_value = index_value * 2;
           break;
@@ -840,6 +806,7 @@ _Use_decl_annotations_ static void VmmpHandleDrAccess(
   const auto register_used =
     VmmpSelectRegister(exit_qualification.fields.gp_register, guest_context);
 
+  // TODO Define this somewhere.
 #if defined(CFG_LOG_MOVDR_EVENTS)
   FcdVmxLogMovDrEvent(exit_qualification, register_used);
 #endif
@@ -930,7 +897,7 @@ _Use_decl_annotations_ static void VmmpHandleDrAccess(
   }
 
   // TODO Use the Dr6 and Dr7 reserved-bits enforcement below in BPM and FCD.
-#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
+#ifdef CFG_HBM_ENABLE_DEBUG_REGISTER_FACADE
   NTSTATUS ntstatus = STATUS_SUCCESS;
 
   ntstatus = FcdVmxProcessMovDrEvent(exit_qualification, register_used);
@@ -987,10 +954,6 @@ _Use_decl_annotations_ static void VmmpHandleDrAccess(
         default: break;
       }
       // clang-format on
-      break;
-    default:
-      HYPERPLATFORM_COMMON_BUG_CHECK(HyperPlatformBugCheck::kUnspecified, 0, 0,
-                                     0);
       break;
   }
 #endif
@@ -1081,32 +1044,32 @@ _Use_decl_annotations_ static void VmmpIoWrapper(bool to_memory, bool is_string,
     if (is_string) {
       // INS
       switch (size_of_access) {
-      case 1: __inbytestring(port, reinterpret_cast<UCHAR*>(address), count); break;
-      case 2: __inwordstring(port, reinterpret_cast<USHORT*>(address), count); break;
-      case 4: __indwordstring(port, reinterpret_cast<ULONG*>(address), count); break;
+      case 1: __inbytestring(port, static_cast<UCHAR*>(address), count); break;
+      case 2: __inwordstring(port, static_cast<USHORT*>(address), count); break;
+      case 4: __indwordstring(port, static_cast<ULONG*>(address), count); break;
       }
     } else {
       // IN
       switch (size_of_access) {
-      case 1: *reinterpret_cast<UCHAR*>(address) = __inbyte(port); break;
-      case 2: *reinterpret_cast<USHORT*>(address) = __inword(port); break;
-      case 4: *reinterpret_cast<ULONG*>(address) = __indword(port); break;
+      case 1: *static_cast<UCHAR*>(address) = __inbyte(port); break;
+      case 2: *static_cast<USHORT*>(address) = __inword(port); break;
+      case 4: *static_cast<ULONG*>(address) = __indword(port); break;
       }
     }
   } else {
     if (is_string) {
       // OUTS
       switch (size_of_access) {
-      case 1: __outbytestring(port, reinterpret_cast<UCHAR*>(address), count); break;
-      case 2: __outwordstring(port, reinterpret_cast<USHORT*>(address), count); break;
-      case 4: __outdwordstring(port, reinterpret_cast<ULONG*>(address), count); break;
+      case 1: __outbytestring(port, static_cast<UCHAR*>(address), count); break;
+      case 2: __outwordstring(port, static_cast<USHORT*>(address), count); break;
+      case 4: __outdwordstring(port, static_cast<ULONG*>(address), count); break;
       }
     } else {
       // OUT
       switch (size_of_access) {
-      case 1: __outbyte(port, *reinterpret_cast<UCHAR*>(address)); break;
-      case 2: __outword(port, *reinterpret_cast<USHORT*>(address)); break;
-      case 4: __outdword(port, *reinterpret_cast<ULONG*>(address)); break;
+      case 1: __outbyte(port, *static_cast<UCHAR*>(address)); break;
+      case 2: __outword(port, *static_cast<USHORT*>(address)); break;
+      case 4: __outdword(port, *static_cast<ULONG*>(address)); break;
       }
     }
   }
@@ -1191,7 +1154,7 @@ _Use_decl_annotations_ static void VmmpHandleCrAccess(
         default:
           HYPERPLATFORM_COMMON_BUG_CHECK(HyperPlatformBugCheck::kUnspecified, 0,
                                          0, 0);
-          break;
+          /* UNREACHABLE */
       }
       break;
 
@@ -1214,14 +1177,13 @@ _Use_decl_annotations_ static void VmmpHandleCrAccess(
         default:
           HYPERPLATFORM_COMMON_BUG_CHECK(HyperPlatformBugCheck::kUnspecified, 0,
                                          0, 0);
-          break;
+          /* UNREACHABLE */
       }
       break;
 
     // Unimplemented
     case MovCrAccessType::kClts:
     case MovCrAccessType::kLmsw:
-    default:
       HYPERPLATFORM_COMMON_DBG_BREAK();
       break;
   }
@@ -1243,11 +1205,6 @@ _Use_decl_annotations_ static void VmmpHandleVmx(GuestContext *guest_context) {
   VmmpAdjustGuestInstructionPointer(guest_context);
 }
 
-//
-// TODO Add a dynamic password system to the VMCALL interface to prevent third
-//  parties from determining the presence of HyperPlatform via VMCALL fuzzing.
-//
-
 // VMCALL
 _Use_decl_annotations_ static void VmmpHandleVmCall(
     GuestContext *guest_context) {
@@ -1259,39 +1216,74 @@ _Use_decl_annotations_ static void VmmpHandleVmCall(
       static_cast<HypercallNumber>(guest_context->gp_regs->cx);
   const auto context = reinterpret_cast<void *>(guest_context->gp_regs->dx);
 
+  // Fail if the vmcall occurred in user mode.
+  if (VmmpGetGuestCpl() != 0) {
+    VmmpIndicateUnsuccessfulVmcall(guest_context);
+    return;
+  }
+
+  if (!UtilIsInBounds(hypercall_number,
+                      HypercallNumber::kMinimumHypercallNumber,
+                      HypercallNumber::kMaximumHypercallNumber)) {
+    // Unsupported hypercall
+    VmmpIndicateUnsuccessfulVmcall(guest_context);
+    return;
+  }
+
   switch (hypercall_number) {
     case HypercallNumber::kTerminateVmm:
       // Unloading requested. This VMCALL is allowed to execute only from CPL=0
-      if (VmmpGetGuestCpl() == 0) {
-#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
-        FcdVmxDriverUnload();
+#if defined(CFG_HBM_ENABLE_DEBUG_REGISTER_FACADE)
+      FcdVmxDriverUnload();
 #endif
-        VmmpHandleVmCallTermination(guest_context, context);
-      } else {
-        VmmpIndicateUnsuccessfulVmcall(guest_context);
-      }
+      VmmpHandleVmCallTermination(guest_context, context);
       break;
-#ifdef CFG_ENABLE_VMCALL_PING
-    case HypercallNumber::kPingVmm:
-      // Sample VMCALL handler
-      HYPERPLATFORM_LOG_INFO_SAFE("Pong by VMM! (context = %p)", context);
-      VmmpIndicateSuccessfulVmcall(guest_context);
-      break;
-#endif
+
+    //case HypercallNumber::kPingVmm:
+    //  // Sample VMCALL handler
+    //  HYPERPLATFORM_LOG_INFO_SAFE("Pong by VMM! (context = %p)", context);
+    //  VmmpIndicateSuccessfulVmcall(guest_context);
+    //  break;
+
     case HypercallNumber::kGetSharedProcessorData:
-      *reinterpret_cast<void **>(context) =
+      *static_cast<void **>(context) =
           guest_context->stack->processor_data->shared_data;
       VmmpIndicateSuccessfulVmcall(guest_context);
       break;
+
+#if defined(CFG_BPM_HARDWARE_BREAKPOINT_MANAGER)
     case HypercallNumber::kSetHardwareBreakpoint:
-    {
-      NTSTATUS ntstatus = BpmVmxSetHardwareBreakpoint(context);
-      if (NT_SUCCESS(ntstatus))
-      {
-        VmmpIndicateSuccessfulVmcall(guest_context);
-      }
+      HbmxSetHardwareBreakpoint(context);
+      VmmpIndicateSuccessfulVmcall(guest_context);
       break;
-    }
+#endif
+
+#if defined(CFG_BPM_EPT_BREAKPOINT_MANAGER)
+    case HypercallNumber::kInstallEptBreakpoint:
+      EbmxInstallEptBreakpoint(
+          guest_context->stack->processor_data->ept_data, context);
+      VmmpIndicateSuccessfulVmcall(guest_context);
+      break;
+
+    case HypercallNumber::kUninstallEptBreakpoint:
+      EbmxUninstallEptBreakpoint(
+          guest_context->stack->processor_data->ept_data, context);
+      VmmpIndicateSuccessfulVmcall(guest_context);
+      break;
+
+    case HypercallNumber::kUninstallEptBreakpointsByProcessId:
+      EbmxUninstallEptBreakpointsByProcessId(
+          guest_context->stack->processor_data->ept_data, context);
+      VmmpIndicateSuccessfulVmcall(guest_context);
+      break;
+
+    case HypercallNumber::kUninstallAllEptBreakpoints:
+      EbmxUninstallAllEptBreakpoints(
+          guest_context->stack->processor_data->ept_data, context);
+      VmmpIndicateSuccessfulVmcall(guest_context);
+      break;
+#endif
+
     default:
       // Unsupported hypercall
       VmmpIndicateUnsuccessfulVmcall(guest_context);
@@ -1322,8 +1314,7 @@ _Use_decl_annotations_ static void VmmpHandleInvalidateTlbEntry(
 _Use_decl_annotations_ static void VmmpHandleEptViolation(
     GuestContext *guest_context) {
   HYPERPLATFORM_PERFORMANCE_MEASURE_THIS_SCOPE();
-  auto processor_data = guest_context->stack->processor_data;
-  EptHandleEptViolation(processor_data->ept_data);
+  EptHandleEptViolation(guest_context);
 }
 
 // EXIT_REASON_EPT_MISCONFIG
@@ -1499,7 +1490,7 @@ _Use_decl_annotations_ static void VmmpHandleVmCallTermination(
   __lidt(&idtr);
 
   // Store an address of the management structure to the context parameter
-  const auto result_ptr = reinterpret_cast<ProcessorData **>(context);
+  const auto result_ptr = static_cast<ProcessorData **>(context);
   *result_ptr = guest_context->stack->processor_data;
   HYPERPLATFORM_LOG_DEBUG_SAFE("Context at %p %p", context,
                                guest_context->stack->processor_data);
@@ -1557,7 +1548,7 @@ _Use_decl_annotations_ static void VmmpInjectInterruption(
 /*_Use_decl_annotations_*/ static ULONG_PTR VmmpGetKernelCr3() {
   ULONG_PTR guest_cr3 = 0;
   static const long kDirectoryTableBaseOffset = IsX64() ? 0x28 : 0x18;
-  if constexpr (IsX64()) {
+  if (IsX64()) {
     // On x64, assume it is an user-mode CR3 when the lowest bit is set. If so,
     // get CR3 from _KPROCESS::DirectoryTableBase.
     guest_cr3 = UtilVmRead(VmcsField::kGuestCr3);

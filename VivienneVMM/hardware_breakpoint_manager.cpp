@@ -1,13 +1,13 @@
 /*++
 
-Copyright (c) 2019 changeofpace. All rights reserved.
+Copyright (c) 2019-2020 changeofpace. All rights reserved.
 
 Use of this source code is governed by the MIT license. See the 'LICENSE' file
 for more information.
 
 Module Name:
 
-    breakpoint_manager.cpp
+    hardware_breakpoint_manager.cpp
 
 Abstract:
 
@@ -25,27 +25,34 @@ Environment:
 
 --*/
 
-#include "breakpoint_manager.h"
+#include "hardware_breakpoint_manager.h"
 
 #include <intrin.h>
 
-#include "config.h"
 #include "debug.h"
 #include "log.h"
-#include "process.h"
+#include "nt.h"
+
+#include "../common/config.h"
 
 #include "HyperPlatform\HyperPlatform\util.h"
 #include "HyperPlatform\HyperPlatform\vmm.h"
 
 
+//
+// TODO Add canonical address checks using MI_RESERVED_BITS_CANONICAL.
+//
+
+
 //=============================================================================
 // Constants and Macros
 //=============================================================================
-#define MODULE_TITLE    "Breakpoint Manager"
+#define MODULE_TITLE    "Hardware Breakpoint Manager"
+#define BPM_TAG         'TmbH'
 
-#define BPM_TAG         'TmpB'
+///#define BPM_ENABLE_VERBOSE_OUTPUT
 
-#ifdef CFG_VERBOSE_BREAKPOINTMANAGER
+#if defined(BPM_ENABLE_VERBOSE_OUTPUT)
 #define BPM_VERBOSE_PRINT   INF_PRINT
 #else
 #define BPM_VERBOSE_PRINT(Format, ...)
@@ -56,7 +63,7 @@ Environment:
 // Private Types
 //=============================================================================
 typedef struct _SETHARDWAREBREAKPOINT_IPI_CONTEXT {
-    NTSTATUS ReturnStatus;
+    volatile POINTER_ALIGNMENT NTSTATUS ReturnStatus;
     BOOLEAN Enable;
     HARDWARE_BREAKPOINT Breakpoint;
     FPBREAKPOINT_CALLBACK CallbackFn;
@@ -165,11 +172,11 @@ static BREAKPOINT_MANAGER_STATE g_BreakpointManager = {};
 
 
 //=============================================================================
-// Private Prototypes
+// Public Vmx Non-Root Interface
 //=============================================================================
 static
 VOID
-BpmiCreateProcessNotifyRoutine(
+HbmpCreateProcessNotifyRoutine(
     _In_ HANDLE ParentId,
     _In_ HANDLE ProcessId,
     _In_ BOOLEAN Create
@@ -177,15 +184,15 @@ BpmiCreateProcessNotifyRoutine(
 
 static
 VOID
-BpmiLogStatistics();
+HbmpLogStatistics();
 
-static KIPI_BROADCAST_WORKER BpmiIpiSetHardwareBreakpoint;
+static KIPI_BROADCAST_WORKER HbmpIpiSetHardwareBreakpoint;
 
 _Requires_lock_held_(g_BreakpointManager.Resource)
 _Check_return_
 static
 NTSTATUS
-BpmiSetHardwareBreakpoint(
+HbmpSetHardwareBreakpoint(
     _In_ BOOLEAN Enable,
     _In_ PHARDWARE_BREAKPOINT pBreakpoint,
     _In_opt_ FPBREAKPOINT_CALLBACK pCallbackFn,
@@ -196,7 +203,7 @@ _Requires_lock_held_(g_BreakpointManager.Resource)
 _Check_return_
 static
 NTSTATUS
-BpmiClearHardwareBreakpoint(
+HbmpClearHardwareBreakpoint(
     _In_ ULONG Index
 );
 
@@ -204,13 +211,16 @@ _Requires_lock_held_(g_BreakpointManager.Resource)
 _Check_return_
 static
 NTSTATUS
-BpmiCleanupBreakpoints();
+HbmpCleanupBreakpoints();
 
+//=============================================================================
+// Private Vmx Root Prototypes
+//=============================================================================
 _IRQL_requires_(HIGH_LEVEL)
 _Check_return_
 static
 NTSTATUS
-BpmiVmxInterpretBreakpointCondition(
+HbmxpInterpretBreakpointCondition(
     _In_ ULONG Index,
     _In_ DR7 Dr7,
     _Inout_ PDB_CONDITION pCondition
@@ -220,7 +230,7 @@ _IRQL_requires_(HIGH_LEVEL)
 _Check_return_
 static
 BOOLEAN
-BpmiVmxIsValidConditionForBreakpoint(
+HbmxpIsValidConditionForBreakpoint(
     _In_ PBPM_DEBUG_ADDRESS_REGISTER pBpmDebugRegister,
     _In_ PDB_CONDITION pCondition
 );
@@ -229,7 +239,7 @@ _IRQL_requires_(HIGH_LEVEL)
 _Check_return_
 static
 VOID
-BpmiVmxInvokeBreakpointCallback(
+HbmxpInvokeBreakpointCallback(
     _In_ PBPM_DEBUG_ADDRESS_REGISTER pBpmDebugRegister,
     _Inout_ GpRegisters* pGuestRegisters,
     _Inout_ FlagRegister* pGuestFlags,
@@ -239,7 +249,7 @@ BpmiVmxInvokeBreakpointCallback(
 _IRQL_requires_(HIGH_LEVEL)
 static
 VOID
-BpmiVmxConsumeDebugException(
+HbmxpConsumeDebugException(
     _In_ FlagRegister* GuestFlags
 );
 
@@ -249,7 +259,7 @@ BpmiVmxConsumeDebugException(
 //=============================================================================
 _Use_decl_annotations_
 NTSTATUS
-BpmDriverEntry()
+HbmDriverEntry()
 {
     BOOLEAN fResourceInitialized = FALSE;
     ULONG cProcessors = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
@@ -290,7 +300,7 @@ BpmDriverEntry()
     //  internal processor state because the callback may access this data.
     //
     ntstatus = PsSetCreateProcessNotifyRoutine(
-        BpmiCreateProcessNotifyRoutine,
+        HbmpCreateProcessNotifyRoutine,
         FALSE);
     if (!NT_SUCCESS(ntstatus))
     {
@@ -313,9 +323,10 @@ exit:
     {
         if (ProcessCallbackInstalled)
         {
-            VERIFY(PsSetCreateProcessNotifyRoutine(
-                BpmiCreateProcessNotifyRoutine,
-                TRUE));
+            VERIFY_NTSTATUS(
+                PsSetCreateProcessNotifyRoutine(
+                    HbmpCreateProcessNotifyRoutine,
+                    TRUE));
         }
 
         if (pProcessorStates)
@@ -325,7 +336,9 @@ exit:
 
         if (fResourceInitialized)
         {
-            VERIFY(ExDeleteResourceLite(&g_BreakpointManager.Resource));
+            VERIFY_NTSTATUS(
+                ExDeleteResourceLite(
+                    &g_BreakpointManager.Resource));
         }
     }
 
@@ -334,7 +347,7 @@ exit:
 
 
 VOID
-BpmDriverUnload()
+HbmDriverUnload()
 {
     INF_PRINT("Unloading %s.", MODULE_TITLE);
 
@@ -344,24 +357,26 @@ BpmDriverUnload()
     //
     // Uninstall owned breakpoints.
     //
-    VERIFY(BpmiCleanupBreakpoints());
+    VERIFY_NTSTATUS(HbmpCleanupBreakpoints());
 
     //
     // Uninstall the process notification callback.
     //
-    VERIFY(
-        PsSetCreateProcessNotifyRoutine(BpmiCreateProcessNotifyRoutine, TRUE));
+    VERIFY_NTSTATUS(
+        PsSetCreateProcessNotifyRoutine(
+            HbmpCreateProcessNotifyRoutine,
+            TRUE));
 
     //
     // Release processor state resources.
     //
     ExFreePoolWithTag(g_BreakpointManager.Processors, BPM_TAG);
 
-    BpmiLogStatistics();
+    HbmpLogStatistics();
 
     ExReleaseResourceAndLeaveCriticalRegion(&g_BreakpointManager.Resource);
 
-    VERIFY(ExDeleteResourceLite(&g_BreakpointManager.Resource));
+    VERIFY_NTSTATUS(ExDeleteResourceLite(&g_BreakpointManager.Resource));
 
     INF_PRINT("%s unloaded.", MODULE_TITLE);
 }
@@ -372,13 +387,13 @@ BpmDriverUnload()
 //=============================================================================
 
 //
-// BpmQuerySystemDebugState
+// HbmQuerySystemDebugState
 //
 // Query information about all BPM-managed breakpoints.
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmQuerySystemDebugState(
+HbmQuerySystemDebugState(
     PSYSTEM_DEBUG_STATE pSystemDebugState,
     ULONG cbSystemDebugState
 )
@@ -445,13 +460,13 @@ exit:
 
 
 //
-// BpmInitializeBreakpoint
+// HbmInitializeBreakpoint
 //
 // Hardware breakpoint constructor.
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmInitializeBreakpoint(
+HbmInitializeBreakpoint(
     ULONG_PTR ProcessId,
     ULONG Index,
     ULONG_PTR Address,
@@ -500,7 +515,7 @@ BpmInitializeBreakpoint(
     // Validate Address.
     //
     // NOTE This logic must remain synchronized with the address filtering
-    //  logic in BpmVmxProcessDebugExceptionEvent.
+    //  logic in HbmxProcessDebugExceptionEvent.
     //
     if ((ULONG_PTR)MM_HIGHEST_USER_ADDRESS < Address)
     {
@@ -582,13 +597,13 @@ exit:
 
 
 //
-// BpmSetHardwareBreakpoint
+// HbmSetHardwareBreakpoint
 //
 // Install a validated hardware breakpoint on all processors.
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmSetHardwareBreakpoint(
+HbmSetHardwareBreakpoint(
     PHARDWARE_BREAKPOINT pBreakpoint,
     FPBREAKPOINT_CALLBACK pCallbackFn,
     PVOID pCallbackCtx
@@ -597,7 +612,7 @@ BpmSetHardwareBreakpoint(
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
     BPM_VERBOSE_PRINT(
-        "BPM: Setting bp: Dr%u, pid=0x%IX (%Iu), addr=0x%IX, type=%c, size=%c",
+        "HBM: Setting bp: Dr%u, pid=0x%IX (%Iu), addr=0x%IX, type=%c, size=%c",
         pBreakpoint->Index,
         pBreakpoint->ProcessId,
         pBreakpoint->ProcessId,
@@ -608,14 +623,14 @@ BpmSetHardwareBreakpoint(
     ExEnterCriticalRegionAndAcquireResourceExclusive(
         &g_BreakpointManager.Resource);
 
-    ntstatus = BpmiSetHardwareBreakpoint(
+    ntstatus = HbmpSetHardwareBreakpoint(
         TRUE,
         pBreakpoint,
         pCallbackFn,
         pCallbackCtx);
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmiSetHardwareBreakpoint failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmpSetHardwareBreakpoint failed: 0x%X", ntstatus);
         goto exit;
     }
 
@@ -627,14 +642,14 @@ exit:
 
 
 //
-// BpmSetHardwareBreakpoint
+// HbmSetHardwareBreakpoint
 //
 // Validate input parameters, construct a hardware breakpoint, then (un)install
 //  the breakpoint on all processors.
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmSetHardwareBreakpoint(
+HbmSetHardwareBreakpoint(
     ULONG_PTR ProcessId,
     ULONG Index,
     ULONG_PTR Address,
@@ -647,7 +662,7 @@ BpmSetHardwareBreakpoint(
     HARDWARE_BREAKPOINT Breakpoint = {};
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
-    ntstatus = BpmInitializeBreakpoint(
+    ntstatus = HbmInitializeBreakpoint(
         ProcessId,
         Index,
         Address,
@@ -656,17 +671,17 @@ BpmSetHardwareBreakpoint(
         &Breakpoint);
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmInitializeBreakpoint failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmInitializeBreakpoint failed: 0x%X", ntstatus);
         goto exit;
     }
 
-    ntstatus = BpmSetHardwareBreakpoint(
+    ntstatus = HbmSetHardwareBreakpoint(
         &Breakpoint,
         pCallbackFn,
         pCallbackCtx);
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmSetHardwareBreakpoint failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmSetHardwareBreakpoint failed: 0x%X", ntstatus);
         goto exit;
     }
 
@@ -676,25 +691,25 @@ exit:
 
 
 //
-// BpmClearHardwareBreakpoint
+// HbmClearHardwareBreakpoint
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmClearHardwareBreakpoint(
+HbmClearHardwareBreakpoint(
     ULONG Index
 )
 {
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
-    BPM_VERBOSE_PRINT("BPM: Clearing Dr%u.", Index);
+    BPM_VERBOSE_PRINT("HBM: Clearing Dr%u.", Index);
 
     ExEnterCriticalRegionAndAcquireResourceExclusive(
         &g_BreakpointManager.Resource);
 
-    ntstatus = BpmiClearHardwareBreakpoint(Index);
+    ntstatus = HbmpClearHardwareBreakpoint(Index);
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmiClearHardwareBreakpoint failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmpClearHardwareBreakpoint failed: 0x%X", ntstatus);
         goto exit;
     }
 
@@ -706,25 +721,25 @@ exit:
 
 
 //
-// BpmCleanupBreakpoints
+// HbmCleanupBreakpoints
 //
 // Uninstall all BPM-managed breakpoints from all processors.
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmCleanupBreakpoints()
+HbmCleanupBreakpoints()
 {
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
-    BPM_VERBOSE_PRINT("BPM: Cleaning up breakpoints.");
+    BPM_VERBOSE_PRINT("HBM: Cleaning up breakpoints.");
 
     ExEnterCriticalRegionAndAcquireResourceExclusive(
         &g_BreakpointManager.Resource);
 
-    ntstatus = BpmiCleanupBreakpoints();
+    ntstatus = HbmpCleanupBreakpoints();
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmiCleanupBreakpoints failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmpCleanupBreakpoints failed: 0x%X", ntstatus);
         goto exit;
     }
 
@@ -740,7 +755,7 @@ exit:
 //=============================================================================
 
 //
-// BpmVmxSetHardwareBreakpoint
+// HbmxSetHardwareBreakpoint
 //
 // Modify the target debug address register and its corresponding DR7 bits in
 //  the guest's context to (un)install a hardware breakpoint. We modify the
@@ -756,8 +771,8 @@ exit:
 //  this reason.
 //
 _Use_decl_annotations_
-NTSTATUS
-BpmVmxSetHardwareBreakpoint(
+VOID
+HbmxSetHardwareBreakpoint(
     PVOID pVmxContext
 )
 {
@@ -898,18 +913,19 @@ exit:
     // The context's return-ntstatus must only be updated to a failing status
     //  code in the event of a failure.
     //
+    // TODO Remove the special case handling of the'STATUS_HV_INVALID_VP_STATE'
+    //  status code.
+    //
     if (!NT_SUCCESS(ntstatus) &&
         STATUS_HV_INVALID_VP_STATE != pIpiContext->ReturnStatus)
     {
         pIpiContext->ReturnStatus = ntstatus;
     }
-
-    return ntstatus;
 }
 
 
 //
-// BpmVmxProcessDebugExceptionEvent
+// HbmxProcessDebugExceptionEvent
 //
 // Interpret the guest's debug registers and VM exit qualification to determine
 //  if a BPM-managed breakpoint caused this exception. If BPM is responsible
@@ -941,7 +957,7 @@ exit:
 //
 _Use_decl_annotations_
 NTSTATUS
-BpmVmxProcessDebugExceptionEvent(
+HbmxProcessDebugExceptionEvent(
     GpRegisters* pGuestRegisters,
     FlagRegister* pGuestFlags,
     PULONG_PTR pGuestIp
@@ -956,14 +972,14 @@ BpmVmxProcessDebugExceptionEvent(
     BOOLEAN fHandleThisException = FALSE;
     NTSTATUS ntstatus = STATUS_SUCCESS;
 
-    BPM_VERBOSE_PRINT("BPM: Entering #DB VM exit handler.");
+    BPM_VERBOSE_PRINT("HBM: Entering #DB VM exit handler.");
 
     //
     // Forward irrelevant debug exceptions to the guest.
     //
     if (ExitQualification.fields.debug_register_access)
     {
-        BPM_VERBOSE_PRINT("BPM: Observed debug register access during #DB.");
+        BPM_VERBOSE_PRINT("HBM: Observed debug register access during #DB.");
         ntstatus = STATUS_UNSUCCESSFUL;
         goto exit;
     }
@@ -973,7 +989,7 @@ BpmVmxProcessDebugExceptionEvent(
         // NOTE If this occurs then a process may be attempting some type of
         //  anti-debug technique.
         //
-        BPM_VERBOSE_PRINT("BPM: Observed single step or branch during #DB.");
+        BPM_VERBOSE_PRINT("HBM: Observed single step or branch during #DB.");
         ntstatus = STATUS_UNSUCCESSFUL;
         goto exit;
     }
@@ -996,17 +1012,17 @@ BpmVmxProcessDebugExceptionEvent(
             continue;
         }
 
-        ntstatus = BpmiVmxInterpretBreakpointCondition(i, Dr7, &Condition);
+        ntstatus = HbmxpInterpretBreakpointCondition(i, Dr7, &Condition);
         if (!NT_SUCCESS(ntstatus))
         {
             ERR_PRINT(
-                "BpmiVmxInterpretBreakpointCondition failed: 0x%X",
+                "HbmxpInterpretBreakpointCondition failed: 0x%X",
                 ntstatus);
             goto exit;
         }
 
         BPM_VERBOSE_PRINT(
-            "BPM: #DB Condition: index=%u, addr=0x%IX, l=%u, g=%u, type=%c,"
+            "HBM: #DB Condition: index=%u, addr=0x%IX, l=%u, g=%u, type=%c,"
             " size=%c",
             Condition.Index,
             Condition.Address,
@@ -1021,7 +1037,7 @@ BpmVmxProcessDebugExceptionEvent(
         //
         // Does the BPM-managed breakpoint in Dr[i] match the condition?
         //
-        fHandleThisException = BpmiVmxIsValidConditionForBreakpoint(
+        fHandleThisException = HbmxpIsValidConditionForBreakpoint(
             pBpmDebugRegister,
             &Condition);
         if (!fHandleThisException)
@@ -1033,7 +1049,7 @@ BpmVmxProcessDebugExceptionEvent(
                 &g_BreakpointManager.Statistics.UnownedBreakpointsSeen);
 
             BPM_VERBOSE_PRINT(
-                "BPM: Encountered #DB caused by unowned breakpoint (%lld).",
+                "HBM: Encountered #DB caused by unowned breakpoint (%lld).",
                 g_BreakpointManager.Statistics.UnownedBreakpointsSeen);
 
             //
@@ -1066,7 +1082,7 @@ BpmVmxProcessDebugExceptionEvent(
     if (PsGetProcessId(PsGetCurrentProcess()) ==
         pBpmDebugRegister->Breakpoint.ProcessId)
     {
-        BpmiVmxInvokeBreakpointCallback(
+        HbmxpInvokeBreakpointCallback(
             pBpmDebugRegister,
             pGuestRegisters,
             pGuestFlags,
@@ -1080,7 +1096,7 @@ BpmVmxProcessDebugExceptionEvent(
     //  multiple conditions were met). Technically, we should only consume the
     //  exception if it is a fault (i.e., an execution breakpoint).
     //
-    BpmiVmxConsumeDebugException(pGuestFlags);
+    HbmxpConsumeDebugException(pGuestFlags);
 
     //
     // Update statistics.
@@ -1094,7 +1110,7 @@ exit:
         InterlockedIncrement64(
             &g_BreakpointManager.Statistics.UnhandledDebugExceptions);
 
-        BPM_VERBOSE_PRINT("BPM: Forwarding #DB to guest.");
+        BPM_VERBOSE_PRINT("HBM: Forwarding #DB to guest.");
     }
 
     return ntstatus;
@@ -1102,11 +1118,11 @@ exit:
 
 
 //=============================================================================
-// Private Interface
+// Public Vmx Non-Root Interface
 //=============================================================================
 
 //
-// BpmiCreateProcessNotifyRoutine
+// HbmpCreateProcessNotifyRoutine
 //
 // Clear hardware breakpoints associated with a process when that process
 //  terminates.
@@ -1114,7 +1130,7 @@ exit:
 _Use_decl_annotations_
 static
 VOID
-BpmiCreateProcessNotifyRoutine(
+HbmpCreateProcessNotifyRoutine(
     HANDLE hParentId,
     HANDLE hProcessId,
     BOOLEAN Create
@@ -1149,7 +1165,7 @@ BpmiCreateProcessNotifyRoutine(
 
             if (hProcessId == pBreakpoint->ProcessId)
             {
-                VERIFY(BpmiClearHardwareBreakpoint(i));
+                VERIFY_NTSTATUS(HbmpClearHardwareBreakpoint(i));
             }
         }
     }
@@ -1162,13 +1178,13 @@ exit:
 
 
 //
-// BpmiLogStatistics
+// HbmpLogStatistics
 //
 // Print the statistics for this VM session.
 //
 static
 VOID
-BpmiLogStatistics()
+HbmpLogStatistics()
 {
     INF_PRINT("Breakpoint Manager Statistics");
     INF_PRINT("%16lld debug exceptions handled.",
@@ -1181,14 +1197,14 @@ BpmiLogStatistics()
 
 
 //
-// BpmiIpiSetHardwareBreakpoint
+// HbmpIpiSetHardwareBreakpoint
 //
 // Enter VMX root mode to (un)install a hardware breakpoint.
 //
 _Use_decl_annotations_
 static
 ULONG_PTR
-BpmiIpiSetHardwareBreakpoint(
+HbmpIpiSetHardwareBreakpoint(
     ULONG_PTR Argument
 )
 {
@@ -1208,7 +1224,7 @@ BpmiIpiSetHardwareBreakpoint(
 
 
 //
-// BpmiSetHardwareBreakpoint
+// HbmpSetHardwareBreakpoint
 //
 // Issue an IPI broadcast to synchronously (un)install a hardware breakpoint on
 //  all processors.
@@ -1216,7 +1232,7 @@ BpmiIpiSetHardwareBreakpoint(
 _Use_decl_annotations_
 static
 NTSTATUS
-BpmiSetHardwareBreakpoint(
+HbmpSetHardwareBreakpoint(
     BOOLEAN Enable,
     PHARDWARE_BREAKPOINT pBreakpoint,
     FPBREAKPOINT_CALLBACK pCallbackFn,
@@ -1256,7 +1272,7 @@ BpmiSetHardwareBreakpoint(
     //
     // Install the breakpoint.
     //
-    KeIpiGenericCall(BpmiIpiSetHardwareBreakpoint, (ULONG_PTR)pIpiContext);
+    KeIpiGenericCall(HbmpIpiSetHardwareBreakpoint, (ULONG_PTR)pIpiContext);
 
     ntstatus = pIpiContext->ReturnStatus;
     if (!NT_SUCCESS(ntstatus))
@@ -1264,12 +1280,12 @@ BpmiSetHardwareBreakpoint(
         if (STATUS_HV_INVALID_VP_STATE == ntstatus)
         {
             ERR_PRINT(
-                "A failure during BpmiIpiSetHardwareBreakpoint has corrupted"
+                "A failure during HbmpIpiSetHardwareBreakpoint has corrupted"
                 " the guest's debug registers.");
         }
         else
         {
-            ERR_PRINT("BpmiIpiSetHardwareBreakpoint failed: 0x%X", ntstatus);
+            ERR_PRINT("HbmpIpiSetHardwareBreakpoint failed: 0x%X", ntstatus);
         }
 
         goto exit;
@@ -1286,7 +1302,7 @@ exit:
 
 
 //
-// BpmiClearHardwareBreakpoint
+// HbmpClearHardwareBreakpoint
 //
 // Zero a debug address register value and its corresponding DR7 bits on all
 //  processors.
@@ -1294,7 +1310,7 @@ exit:
 _Use_decl_annotations_
 static
 NTSTATUS
-BpmiClearHardwareBreakpoint(
+HbmpClearHardwareBreakpoint(
     ULONG Index
 )
 {
@@ -1311,10 +1327,10 @@ BpmiClearHardwareBreakpoint(
     Breakpoint.Type = (HWBP_TYPE)0;
     Breakpoint.Size = (HWBP_SIZE)0;
 
-    ntstatus = BpmiSetHardwareBreakpoint(FALSE, &Breakpoint, NULL, NULL);
+    ntstatus = HbmpSetHardwareBreakpoint(FALSE, &Breakpoint, NULL, NULL);
     if (!NT_SUCCESS(ntstatus))
     {
-        ERR_PRINT("BpmiSetHardwareBreakpoint failed: 0x%X", ntstatus);
+        ERR_PRINT("HbmpSetHardwareBreakpoint failed: 0x%X", ntstatus);
         goto exit;
     }
 
@@ -1326,7 +1342,7 @@ exit:
 _Use_decl_annotations_
 static
 NTSTATUS
-BpmiCleanupBreakpoints()
+HbmpCleanupBreakpoints()
 {
     PBPM_DEBUG_ADDRESS_REGISTER pBpmDebugRegister = NULL;
     BOOLEAN Failed = FALSE;
@@ -1355,7 +1371,7 @@ BpmiCleanupBreakpoints()
                 continue;
             }
 
-            ntstatus = BpmiClearHardwareBreakpoint(i);
+            ntstatus = HbmpClearHardwareBreakpoint(i);
             if (!NT_SUCCESS(ntstatus))
             {
                 //
@@ -1363,7 +1379,7 @@ BpmiCleanupBreakpoints()
                 //  many breakpoints as possible.
                 //
                 ERR_PRINT(
-                    "BpmiClearHardwareBreakpoint failed: 0x%X, proc=%u,"
+                    "HbmpClearHardwareBreakpoint failed: 0x%X, proc=%u,"
                     " dr%u",
                     ntstatus,
                     p,
@@ -1382,8 +1398,12 @@ BpmiCleanupBreakpoints()
 }
 
 
+//=============================================================================
+// Private Vmx Root Prototypes
+//=============================================================================
+
 //
-// BpmiVmxInterpretBreakpointCondition
+// HbmxpInterpretBreakpointCondition
 //
 // Generate a logical representation of a breakpoint condition which caused a
 //  debug exception.
@@ -1396,7 +1416,7 @@ BpmiCleanupBreakpoints()
 _Use_decl_annotations_
 static
 NTSTATUS
-BpmiVmxInterpretBreakpointCondition(
+HbmxpInterpretBreakpointCondition(
     ULONG Index,
     DR7 Dr7,
     PDB_CONDITION pCondition
@@ -1473,7 +1493,7 @@ exit:
 
 
 //
-// BpmiVmxIsValidConditionForBreakpoint
+// HbmxpIsValidConditionForBreakpoint
 //
 // NOTE This function assumes that the condition values are valid.
 //
@@ -1486,7 +1506,7 @@ exit:
 _Use_decl_annotations_
 static
 BOOLEAN
-BpmiVmxIsValidConditionForBreakpoint(
+HbmxpIsValidConditionForBreakpoint(
     PBPM_DEBUG_ADDRESS_REGISTER pBpmDebugRegister,
     PDB_CONDITION pCondition
 )
@@ -1502,12 +1522,12 @@ BpmiVmxIsValidConditionForBreakpoint(
 
 
 //
-// BpmiVmxInvokeBreakpointCallback
+// HbmxpInvokeBreakpointCallback
 //
 _Use_decl_annotations_
 static
 VOID
-BpmiVmxInvokeBreakpointCallback(
+HbmxpInvokeBreakpointCallback(
     PBPM_DEBUG_ADDRESS_REGISTER pBpmDebugRegister,
     GpRegisters* pGuestRegisters,
     FlagRegister* pGuestFlags,
@@ -1522,7 +1542,7 @@ BpmiVmxInvokeBreakpointCallback(
     // Ignore breakpoints which occur outside of user space.
     //
     // NOTE This logic must remain synchronized with the address validation
-    //  logic in BpmInitializeBreakpoint.
+    //  logic in HbmInitializeBreakpoint.
     //
     if ((ULONG_PTR)MM_HIGHEST_USER_ADDRESS <= (*pGuestIp))
     {
@@ -1556,7 +1576,7 @@ BpmiVmxInvokeBreakpointCallback(
     if (GuestIpOriginal != (*pGuestIp))
     {
         BPM_VERBOSE_PRINT(
-            "BPM: Modifying guest instruction pointer: 0x%IX -> 0x%IX",
+            "HBM: Modifying guest instruction pointer: 0x%IX -> 0x%IX",
             GuestIpOriginal,
             *pGuestIp);
 
@@ -1571,7 +1591,7 @@ BpmiVmxInvokeBreakpointCallback(
     if (GuestFlagsOriginal.all != pGuestFlags->all)
     {
         BPM_VERBOSE_PRINT(
-            "BPM: Modifying guest flags register: 0x%IX -> 0x%IX",
+            "HBM: Modifying guest flags register: 0x%IX -> 0x%IX",
             GuestFlagsOriginal.all,
             pGuestFlags->all);
 
@@ -1589,7 +1609,7 @@ exit:
 
 
 //
-// BpmiVmxConsumeDebugException
+// HbmxpConsumeDebugException
 //
 // Set the resume flag in the guest flags VMCS field so that the guest can
 //  successfully re-execute the original instruction on VM entry.
@@ -1603,7 +1623,7 @@ exit:
 _Use_decl_annotations_
 static
 VOID
-BpmiVmxConsumeDebugException(
+HbmxpConsumeDebugException(
     FlagRegister* pGuestFlags
 )
 {

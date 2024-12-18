@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2018, Satoshi Tanda. All rights reserved.
+// Copyright (c) 2015-2019, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,8 @@
 #include "util.h"
 #include "vmm.h"
 
-#include "..\..\config.h"
+#include "../../../common/config.h"
+
 #include "..\..\debug_register_facade.h"
 
 extern "C" {
@@ -144,7 +145,7 @@ inline ULONG GetSegmentLimit(_In_ ULONG selector) {
 
 // Checks if a VMM can be installed, and so, installs it
 _Use_decl_annotations_ NTSTATUS VmInitialization() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   if (VmpIsHyperPlatformInstalled()) {
     return STATUS_CANCELLED;
@@ -173,13 +174,13 @@ _Use_decl_annotations_ NTSTATUS VmInitialization() {
 
 // Checks if the system supports virtualization
 _Use_decl_annotations_ static bool VmpIsVmxAvailable() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // See: DISCOVERING SUPPORT FOR VMX
   // If CPUID.1:ECX.VMX[bit 5]=1, then VMX operation is supported.
   int cpu_info[4] = {};
   __cpuid(cpu_info, 1);
-  const CpuFeaturesEcx cpu_features = {static_cast<ULONG_PTR>(cpu_info[2])};
+  const CpuFeaturesEcx cpu_features = {static_cast<ULONG32>(cpu_info[2])};
   if (!cpu_features.fields.vmx) {
     HYPERPLATFORM_LOG_ERROR("VMX features are not supported.");
     return false;
@@ -219,7 +220,7 @@ _Use_decl_annotations_ static bool VmpIsVmxAvailable() {
 // Sets 1 to the lock bit of the IA32_FEATURE_CONTROL MSR
 _Use_decl_annotations_ static NTSTATUS VmpSetLockBitCallback(void *context) {
   UNREFERENCED_PARAMETER(context);
-  PAGED_CODE();
+  PAGED_CODE()
 
   Ia32FeatureControlMsr vmx_feature_control = {
       UtilReadMsr64(Msr::kIa32FeatureControl)};
@@ -238,9 +239,9 @@ _Use_decl_annotations_ static NTSTATUS VmpSetLockBitCallback(void *context) {
 
 // Initialize shared processor data
 _Use_decl_annotations_ static SharedProcessorData *VmpInitializeSharedData() {
-  PAGED_CODE();
+  PAGED_CODE()
 
-  const auto shared_data = reinterpret_cast<SharedProcessorData *>(
+  const auto shared_data = static_cast<SharedProcessorData *>(
       ExAllocatePoolWithTag(NonPagedPool, sizeof(SharedProcessorData),
                             kHyperPlatformCommonPoolTag));
   if (!shared_data) {
@@ -256,21 +257,21 @@ _Use_decl_annotations_ static SharedProcessorData *VmpInitializeSharedData() {
     return nullptr;
   }
 
-  // Setup IO bitmaps
-  const auto io_bitmaps = VmpBuildIoBitmaps();
-  if (!io_bitmaps) {
-    ExFreePoolWithTag(shared_data->msr_bitmap, kHyperPlatformCommonPoolTag);
-    ExFreePoolWithTag(shared_data, kHyperPlatformCommonPoolTag);
-    return nullptr;
-  }
-  shared_data->io_bitmap_a = io_bitmaps;
-  shared_data->io_bitmap_b = io_bitmaps + PAGE_SIZE;
+  //// Setup IO bitmaps
+  //const auto io_bitmaps = VmpBuildIoBitmaps();
+  //if (!io_bitmaps) {
+  //  ExFreePoolWithTag(shared_data->msr_bitmap, kHyperPlatformCommonPoolTag);
+  //  ExFreePoolWithTag(shared_data, kHyperPlatformCommonPoolTag);
+  //  return nullptr;
+  //}
+  //shared_data->io_bitmap_a = io_bitmaps;
+  //shared_data->io_bitmap_b = io_bitmaps + PAGE_SIZE;
   return shared_data;
 }
 
 // Build MSR bitmap
 _Use_decl_annotations_ static void *VmpBuildMsrBitmap() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   const auto msr_bitmap = ExAllocatePoolWithTag(NonPagedPool, PAGE_SIZE,
                                                 kHyperPlatformCommonPoolTag);
@@ -280,7 +281,7 @@ _Use_decl_annotations_ static void *VmpBuildMsrBitmap() {
   RtlZeroMemory(msr_bitmap, PAGE_SIZE);
 
   // Activate VM-exit for RDMSR against all MSRs
-  const auto bitmap_read_low = reinterpret_cast<UCHAR *>(msr_bitmap);
+  const auto bitmap_read_low = static_cast<UCHAR *>(msr_bitmap);
   const auto bitmap_read_high = bitmap_read_low + 1024;
   RtlFillMemory(bitmap_read_low, 1024, 0xff);   // read        0 -     1fff
   RtlFillMemory(bitmap_read_high, 1024, 0xff);  // read c0000000 - c0001fff
@@ -314,10 +315,10 @@ _Use_decl_annotations_ static void *VmpBuildMsrBitmap() {
 
 // Build IO bitmaps
 _Use_decl_annotations_ static UCHAR *VmpBuildIoBitmaps() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // Allocate two IO bitmaps as one contiguous 4K+4K page
-  const auto io_bitmaps = reinterpret_cast<UCHAR *>(ExAllocatePoolWithTag(
+  const auto io_bitmaps = static_cast<UCHAR *>(ExAllocatePoolWithTag(
       NonPagedPool, PAGE_SIZE * 2, kHyperPlatformCommonPoolTag));
   if (!io_bitmaps) {
     return nullptr;
@@ -343,7 +344,7 @@ _Use_decl_annotations_ static UCHAR *VmpBuildIoBitmaps() {
 
 // Virtualize the current processor
 _Use_decl_annotations_ static NTSTATUS VmpStartVm(void *context) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   HYPERPLATFORM_LOG_INFO("Initializing VMX for the processor %lu.",
                          KeGetCurrentProcessorNumberEx(nullptr));
@@ -361,16 +362,16 @@ _Use_decl_annotations_ static NTSTATUS VmpStartVm(void *context) {
 _Use_decl_annotations_ static void VmpInitializeVm(
     ULONG_PTR guest_stack_pointer, ULONG_PTR guest_instruction_pointer,
     void *context) {
-  PAGED_CODE();
+  PAGED_CODE()
 
-  const auto shared_data = reinterpret_cast<SharedProcessorData *>(context);
+  const auto shared_data = static_cast<SharedProcessorData *>(context);
   if (!shared_data) {
     return;
   }
 
   // Allocate related structures
   const auto processor_data =
-      reinterpret_cast<ProcessorData *>(ExAllocatePoolWithTag(
+      static_cast<ProcessorData *>(ExAllocatePoolWithTag(
           NonPagedPool, sizeof(ProcessorData), kHyperPlatformCommonPoolTag));
   if (!processor_data) {
     return;
@@ -396,7 +397,7 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   RtlZeroMemory(processor_data->vmm_stack_limit, KERNEL_STACK_SIZE);
 
   processor_data->vmcs_region =
-      reinterpret_cast<VmControlStructure *>(ExAllocatePoolWithTag(
+      static_cast<VmControlStructure *>(ExAllocatePoolWithTag(
           NonPagedPool, kVmxMaxVmcsSize, kHyperPlatformCommonPoolTag));
   if (!processor_data->vmcs_region) {
     VmpFreeProcessorData(processor_data);
@@ -405,7 +406,7 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   RtlZeroMemory(processor_data->vmcs_region, kVmxMaxVmcsSize);
 
   processor_data->vmxon_region =
-      reinterpret_cast<VmControlStructure *>(ExAllocatePoolWithTag(
+      static_cast<VmControlStructure *>(ExAllocatePoolWithTag(
           NonPagedPool, kVmxMaxVmcsSize, kHyperPlatformCommonPoolTag));
   if (!processor_data->vmxon_region) {
     VmpFreeProcessorData(processor_data);
@@ -453,7 +454,7 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   // fields (Eip and HardwareEsp on x86, or Rip and Rsp on x64) is properly
   // initialized (in VmmVmExitHandler) and used by Windbg. On VM-exit this space
   // is just skipped by subtracting the stack pointer.
-  if constexpr (!IsReleaseBuild()) {
+  if (!IsReleaseBuild()) {
     const auto vmm_stack_frame =
         reinterpret_cast<void *>(vmm_stack_data - sizeof(KtrapFrame));
     RtlFillMemory(vmm_stack_frame, sizeof(KtrapFrame), 0xff);
@@ -501,7 +502,7 @@ _Use_decl_annotations_ static void VmpInitializeVm(
     goto Exit;
   }
 
-#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
+#ifdef CFG_HBM_ENABLE_DEBUG_REGISTER_FACADE
   //
   // We must perform DebugRegisterFacade VMX initialization before launching
   //  the VM to avoid race conditions involving the contents of the debug
@@ -527,7 +528,7 @@ Exit:;
 // See: VMM SETUP & TEAR DOWN
 _Use_decl_annotations_ static bool VmpEnterVmxMode(
     ProcessorData *processor_data) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // Apply FIXED bits
   // See: VMX-FIXED BITS IN CR0
@@ -583,7 +584,7 @@ _Use_decl_annotations_ static bool VmpEnterVmxMode(
 // See: VMM SETUP & TEAR DOWN
 _Use_decl_annotations_ static bool VmpInitializeVmcs(
     ProcessorData *processor_data) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // Write a VMCS revision identifier
   const Ia32VmxBasicMsr vmx_basic_msr = {UtilReadMsr64(Msr::kIa32VmxBasic)};
@@ -606,13 +607,17 @@ _Use_decl_annotations_ static bool VmpInitializeVmcs(
 _Use_decl_annotations_ static bool VmpSetupVmcs(
     const ProcessorData *processor_data, ULONG_PTR guest_stack_pointer,
     ULONG_PTR guest_instruction_pointer, ULONG_PTR vmm_stack_pointer) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   Gdtr gdtr = {};
   _sgdt(&gdtr);
 
   Idtr idtr = {};
   __sidt(&idtr);
+
+  //---------------------------------------------------------------------------
+  // Start VM Configuration
+  //---------------------------------------------------------------------------
 
   // See: Algorithms for Determining VMX Capabilities
   const auto use_true_msrs = Ia32VmxBasicMsr{UtilReadMsr64(Msr::kIa32VmxBasic)}
@@ -623,15 +628,11 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   //===========================================================================
   VmxVmEntryControls vm_entryctl_requested = {};
 
+#if defined(CFG_BPM_HARDWARE_BREAKPOINT_MANAGER)
   vm_entryctl_requested.fields.load_debug_controls = true;
+#endif
   vm_entryctl_requested.fields.ia32e_mode_guest = IsX64();
-  vm_entryctl_requested.fields.entry_to_smm = false;
-  vm_entryctl_requested.fields.deactivate_dual_monitor_treatment = false;
-  vm_entryctl_requested.fields.load_ia32_perf_global_ctrl = false;
-  vm_entryctl_requested.fields.load_ia32_pat = false;
-  vm_entryctl_requested.fields.load_ia32_efer = false;
-  vm_entryctl_requested.fields.load_ia32_bndcfgs = false;
-  vm_entryctl_requested.fields.conceal_vmentries_from_intel_pt = false;
+  vm_entryctl_requested.fields.conceal_vmentries_from_intel_pt = true;
 
   VmxVmEntryControls vm_entryctl = {VmpAdjustControlValue(
       (use_true_msrs) ? Msr::kIa32VmxTrueEntryCtls : Msr::kIa32VmxEntryCtls,
@@ -642,71 +643,34 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   //===========================================================================
   VmxVmExitControls vm_exitctl_requested = {};
 
+#if defined(CFG_BPM_HARDWARE_BREAKPOINT_MANAGER)
   vm_exitctl_requested.fields.save_debug_controls = true;
+#endif
   vm_exitctl_requested.fields.host_address_space_size = IsX64();
-  vm_exitctl_requested.fields.load_ia32_perf_global_ctrl = false;
-  vm_exitctl_requested.fields.acknowledge_interrupt_on_exit = true;
-  vm_exitctl_requested.fields.save_ia32_pat = false;
-  vm_exitctl_requested.fields.load_ia32_pat = false;
-  vm_exitctl_requested.fields.save_ia32_efer = false;
-  vm_exitctl_requested.fields.load_ia32_efer = false;
-  vm_exitctl_requested.fields.save_vmx_preemption_timer_value = false;
-  vm_exitctl_requested.fields.clear_ia32_bndcfgs = false;
-  vm_exitctl_requested.fields.conceal_vmexits_from_intel_pt = false;
+  vm_exitctl_requested.fields.conceal_vmexits_from_intel_pt = true;
 
   VmxVmExitControls vm_exitctl = {VmpAdjustControlValue(
       (use_true_msrs) ? Msr::kIa32VmxTrueExitCtls : Msr::kIa32VmxExitCtls,
       vm_exitctl_requested.all)};
 
   //===========================================================================
-  // Pin Based Controls
+  // Pin-Based VM-Execution Controls
   //===========================================================================
   VmxPinBasedControls vm_pinctl_requested = {};
-
-  vm_pinctl_requested.fields.external_interrupt_exiting = false;
-  vm_pinctl_requested.fields.nmi_exiting = false;
-  vm_pinctl_requested.fields.virtual_nmis = false;
-  vm_pinctl_requested.fields.activate_vmx_peemption_timer = false;
-  vm_pinctl_requested.fields.process_posted_interrupts = false;
-
   VmxPinBasedControls vm_pinctl = {
       VmpAdjustControlValue((use_true_msrs) ? Msr::kIa32VmxTruePinbasedCtls
                                             : Msr::kIa32VmxPinbasedCtls,
                             vm_pinctl_requested.all)};
 
   //===========================================================================
-  // Processor Based Controls
+  // Processor-Based VM-Execution Controls
   //===========================================================================
   VmxProcessorBasedControls vm_procctl_requested = {};
 
-  vm_procctl_requested.fields.interrupt_window_exiting = false;
-  vm_procctl_requested.fields.use_tsc_offseting = false;
-  vm_procctl_requested.fields.hlt_exiting = false;
-  vm_procctl_requested.fields.invlpg_exiting = false;
-  vm_procctl_requested.fields.mwait_exiting = false;
-  vm_procctl_requested.fields.rdpmc_exiting = false;
-  vm_procctl_requested.fields.rdtsc_exiting = false;
-  //
-  // TODO Determine if we can disable this setting without impacting
-  //  HyperPlatform because we do not support x86.
-  //
-  vm_procctl_requested.fields.cr3_load_exiting = true;
-  vm_procctl_requested.fields.cr3_store_exiting = false;
-  vm_procctl_requested.fields.cr8_load_exiting = false;
-  vm_procctl_requested.fields.cr8_store_exiting = false;
-  vm_procctl_requested.fields.use_tpr_shadow = false;
-  vm_procctl_requested.fields.nmi_window_exiting = false;
-#ifdef CFG_ENABLE_DEBUGREGISTERFACADE
+#if defined(CFG_HBM_ENABLE_DEBUG_REGISTER_FACADE)
   vm_procctl_requested.fields.mov_dr_exiting = true;
-#else
-  vm_procctl_requested.fields.mov_dr_exiting = false;
 #endif
-  vm_procctl_requested.fields.unconditional_io_exiting = false;
-  vm_procctl_requested.fields.use_io_bitmaps = false;
-  vm_procctl_requested.fields.monitor_trap_flag = false;
-  vm_procctl_requested.fields.use_msr_bitmaps = false;
-  vm_procctl_requested.fields.monitor_exiting = false;
-  vm_procctl_requested.fields.pause_exiting = false;
+  vm_procctl_requested.fields.use_msr_bitmaps = true;
   vm_procctl_requested.fields.activate_secondary_control = true;
 
   VmxProcessorBasedControls vm_procctl = {
@@ -715,34 +679,17 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
                             vm_procctl_requested.all)};
 
   //===========================================================================
-  // Secondary Processor Based Controls
+  // Secondary Processor-Based VM-Execution Controls
   //===========================================================================
   VmxSecondaryProcessorBasedControls vm_procctl2_requested = {};
 
-  vm_procctl2_requested.fields.virtualize_apic_accesses = false;
-#ifdef CFG_ENABLE_EPT
+#if defined(CFG_BPM_EPT_BREAKPOINT_MANAGER)
   vm_procctl2_requested.fields.enable_ept = true;
-#else
-  vm_procctl2_requested.fields.enable_ept = false;
 #endif
-  vm_procctl2_requested.fields.descriptor_table_exiting = false;
   vm_procctl2_requested.fields.enable_rdtscp = true;            // for Win10
-  vm_procctl2_requested.fields.virtualize_x2apic_mode = false;
   vm_procctl2_requested.fields.enable_vpid = true;
-  vm_procctl2_requested.fields.wbinvd_exiting = false;
-  vm_procctl2_requested.fields.unrestricted_guest = false;
-  vm_procctl2_requested.fields.apic_register_virtualization = false;
-  vm_procctl2_requested.fields.virtual_interrupt_delivery = false;
-  vm_procctl2_requested.fields.pause_loop_exiting = false;
-  vm_procctl2_requested.fields.rdrand_exiting = false;
   vm_procctl2_requested.fields.enable_invpcid = true;           // for Win10
-  vm_procctl2_requested.fields.enable_vm_functions = false;
-  vm_procctl2_requested.fields.vmcs_shadowing = false;
-  vm_procctl2_requested.fields.rdseed_exiting = false;
-  vm_procctl2_requested.fields.ept_violation_ve = false;
   vm_procctl2_requested.fields.enable_xsaves_xstors = true;     // for Win10
-  vm_procctl2_requested.fields.mode_based_execute_control_for_ept = false;
-  vm_procctl2_requested.fields.use_tsc_scaling = false;
 
   VmxSecondaryProcessorBasedControls vm_procctl2 = {VmpAdjustControlValue(
       Msr::kIa32VmxProcBasedCtls2, vm_procctl2_requested.all)};
@@ -758,13 +705,22 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   HYPERPLATFORM_LOG_DEBUG("SecondaryProcessorBasedControls  = %08x",
                           vm_procctl2.all);
 
+  //===========================================================================
+  // Exception Bitmap
+  //===========================================================================
   // NOTE: Comment in any of those as needed
   const auto exception_bitmap =
       // 1 << InterruptionVector::kBreakpointException |
       // 1 << InterruptionVector::kGeneralProtectionException |
       // 1 << InterruptionVector::kPageFaultException |
+#if defined(CFG_BPM_HARDWARE_BREAKPOINT_MANAGER)
       1 << InterruptionVector::kDebugException |
+#endif
       0;
+
+  //---------------------------------------------------------------------------
+  // End VM Configuration
+  //---------------------------------------------------------------------------
 
   // Set up CR0 and CR4 bitmaps
   // - Where a bit is     masked, the shadow bit appears
@@ -821,8 +777,8 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   error |= UtilVmWrite(VmcsField::kHostTrSelector, AsmReadTR() & 0xf8);
 
   /* 64-Bit Control Fields */
-  error |= UtilVmWrite64(VmcsField::kIoBitmapA, UtilPaFromVa(processor_data->shared_data->io_bitmap_a));
-  error |= UtilVmWrite64(VmcsField::kIoBitmapB, UtilPaFromVa(processor_data->shared_data->io_bitmap_b));
+  //error |= UtilVmWrite64(VmcsField::kIoBitmapA, UtilPaFromVa(processor_data->shared_data->io_bitmap_a));
+  //error |= UtilVmWrite64(VmcsField::kIoBitmapB, UtilPaFromVa(processor_data->shared_data->io_bitmap_b));
   error |= UtilVmWrite64(VmcsField::kMsrBitmap, UtilPaFromVa(processor_data->shared_data->msr_bitmap));
   error |= UtilVmWrite64(VmcsField::kEptPointer, EptGetEptPointer(processor_data->ept_data));
 
@@ -927,7 +883,7 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
 
 // Executes vmlaunch
 _Use_decl_annotations_ static void VmpLaunchVm() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   auto error_code = UtilVmRead(VmcsField::kVmInstructionError);
   if (error_code) {
@@ -948,7 +904,7 @@ _Use_decl_annotations_ static void VmpLaunchVm() {
 // Returns access right of the segment specified by the SegmentSelector for VMX
 _Use_decl_annotations_ static ULONG VmpGetSegmentAccessRight(
     USHORT segment_selector) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   VmxRegmentDescriptorAccessRight access_right = {};
   if (segment_selector) {
@@ -968,7 +924,7 @@ _Use_decl_annotations_ static ULONG VmpGetSegmentAccessRight(
 // Returns a base address of the segment specified by SegmentSelector
 _Use_decl_annotations_ static ULONG_PTR VmpGetSegmentBase(
     ULONG_PTR gdt_base, USHORT segment_selector) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   const SegmentSelector ss = {segment_selector};
   if (!ss.all) {
@@ -993,7 +949,7 @@ _Use_decl_annotations_ static ULONG_PTR VmpGetSegmentBase(
 // Returns the segment descriptor corresponds to the SegmentSelector
 _Use_decl_annotations_ static SegmentDescriptor *VmpGetSegmentDescriptor(
     ULONG_PTR descriptor_table_base, USHORT segment_selector) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   const SegmentSelector ss = {segment_selector};
   return reinterpret_cast<SegmentDescriptor *>(
@@ -1003,7 +959,7 @@ _Use_decl_annotations_ static SegmentDescriptor *VmpGetSegmentDescriptor(
 // Returns a base address of segment_descriptor
 _Use_decl_annotations_ static ULONG_PTR VmpGetSegmentBaseByDescriptor(
     const SegmentDescriptor *segment_descriptor) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // Calculate a 32bit base address
   const auto base_high = segment_descriptor->fields.base_high << (6 * 4);
@@ -1023,7 +979,7 @@ _Use_decl_annotations_ static ULONG_PTR VmpGetSegmentBaseByDescriptor(
 // Adjust the requested control value with consulting a value of related MSR
 _Use_decl_annotations_ static ULONG VmpAdjustControlValue(
     Msr msr, ULONG requested_value) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   LARGE_INTEGER msr_value = {};
   msr_value.QuadPart = UtilReadMsr64(msr);
@@ -1038,7 +994,7 @@ _Use_decl_annotations_ static ULONG VmpAdjustControlValue(
 
 // Terminates VM
 _Use_decl_annotations_ void VmTermination() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   HYPERPLATFORM_LOG_INFO("Uninstalling VMM.");
   auto status = UtilForEachProcessor(VmpStopVm, nullptr);
@@ -1053,7 +1009,7 @@ _Use_decl_annotations_ void VmTermination() {
 // Stops virtualization through a hypercall and frees all related memory
 _Use_decl_annotations_ static NTSTATUS VmpStopVm(void *context) {
   UNREFERENCED_PARAMETER(context);
-  PAGED_CODE();
+  PAGED_CODE()
 
   HYPERPLATFORM_LOG_INFO("Terminating VMX for the processor %lu.",
                          KeGetCurrentProcessorNumberEx(nullptr));
@@ -1077,7 +1033,7 @@ _Use_decl_annotations_ static NTSTATUS VmpStopVm(void *context) {
 // Frees all related memory
 _Use_decl_annotations_ static void VmpFreeProcessorData(
     ProcessorData *processor_data) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   if (!processor_data) {
     return;
@@ -1104,7 +1060,7 @@ _Use_decl_annotations_ static void VmpFreeProcessorData(
 // Decrement reference count of shared data and free it if no reference
 _Use_decl_annotations_ static void VmpFreeSharedData(
     ProcessorData *processor_data) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   if (!processor_data->shared_data) {
     return;
@@ -1116,10 +1072,10 @@ _Use_decl_annotations_ static void VmpFreeSharedData(
   }
 
   HYPERPLATFORM_LOG_DEBUG("Freeing shared data...");
-  if (processor_data->shared_data->io_bitmap_a) {
-    ExFreePoolWithTag(processor_data->shared_data->io_bitmap_a,
-                      kHyperPlatformCommonPoolTag);
-  }
+  //if (processor_data->shared_data->io_bitmap_a) {
+  //  ExFreePoolWithTag(processor_data->shared_data->io_bitmap_a,
+  //                    kHyperPlatformCommonPoolTag);
+  //}
   if (processor_data->shared_data->msr_bitmap) {
     ExFreePoolWithTag(processor_data->shared_data->msr_bitmap,
                       kHyperPlatformCommonPoolTag);
@@ -1129,23 +1085,23 @@ _Use_decl_annotations_ static void VmpFreeSharedData(
 
 // Tests if HyperPlatform is already installed
 _Use_decl_annotations_ static bool VmpIsHyperPlatformInstalled() {
-  PAGED_CODE();
+  PAGED_CODE()
 
   int cpu_info[4] = {};
   __cpuid(cpu_info, 1);
-  const CpuFeaturesEcx cpu_features = {static_cast<ULONG_PTR>(cpu_info[2])};
+  const CpuFeaturesEcx cpu_features = {static_cast<ULONG32>(cpu_info[2])};
   if (!cpu_features.fields.not_used) {
     return false;
   }
 
   __cpuid(cpu_info, kHyperVCpuidInterface);
-  return cpu_info[0] == CFG_VVMM_SIGNATURE;
+  return cpu_info[0] == CFG_NAME_VIVIENNE_SIGNATURE;
 }
 
 // Virtualizes the specified processor
 _Use_decl_annotations_ NTSTATUS
 VmHotplugCallback(const PROCESSOR_NUMBER &proc_num) {
-  PAGED_CODE();
+  PAGED_CODE()
 
   // Switch to the processor 0 to get SharedProcessorData
   GROUP_AFFINITY affinity = {};
